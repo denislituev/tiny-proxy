@@ -1,0 +1,28 @@
+# Main site for API
+api.myservice.com {
+    # All user requests go to one service
+    handle_path /api/v1/users/* {
+        reverse_proxy user-service:3001
+    }
+
+    # Order requests go to another service
+    handle_path /api/v1/orders/* {
+        reverse_proxy order-service:3002
+    }
+
+    # Health check endpoint responds directly from the gateway
+    handle_path /health {
+        respond 200 "Service is healthy"
+    }
+}
+
+# Legacy API that needs to be rewritten to the new one
+legacy.myservice.com {
+    # Replace /old-api with /v1 in path before sending
+    uri_replace /old-api /v1
+
+    # Add header so backend knows the request came through proxy
+    header X-Gateway-Version "legacy-proxy"
+
+    reverse_proxy new-api-service:3000
+}

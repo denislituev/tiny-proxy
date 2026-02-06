@@ -1,6 +1,5 @@
 mod config;
 
-use crate::config::SiteConfig;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -19,7 +18,7 @@ static TARGET: &str = "http://127.0.0.1:5001";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = config::Config::from_file("./file.caddy")?;
-    println!("Config: {:?}", config);
+    //println!("Config: {:?}", config);
 
     let addr: SocketAddr = "127.0.0.1:8080".parse()?;
     let listener = TcpListener::bind(addr).await?;
@@ -51,21 +50,142 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+// Match path against pattern (supports wildcard *)
+// Returns Some(remaining_path) if match, None otherwise
+fn match_pattern(pattern: &str, path: &str) -> Option<String> {
+    if pattern.ends_with("/*") {
+        let prefix = &pattern[..pattern.len() - 2];
+        if path.starts_with(prefix) {
+            // Remove prefix and return remaining path
+            let remaining = path.strip_prefix(prefix).unwrap_or(path);
+            Some(remaining.to_string())
+        } else {
+            None
+        }
+    } else {
+        if pattern == path {
+            Some("/".to_string()) // Exact match, send root
+        } else {
+            None
+        }
+    }
+}
+
+// Find matching directive for given path
+fn find_matching_directive(
+    path: &str,
+    site_config: &config::SiteConfig,
+) -> Option<config::Directive> {
+    for directive in &site_config.directives {
+        match directive {
+            config::Directive::HandlePath {
+                pattern,
+                directives,
+            } => {
+                if let Some(_) = match_pattern(pattern, path) {
+                    // Found matching handle_path, return first nested directive
+                    return directives.first().cloned();
+                }
+            }
+            config::Directive::ReverseProxy { .. } => {
+                // Direct reverse_proxy without handle_path
+                return Some(directive.clone());
+            }
+            config::Directive::Respond { .. } => {
+                // Direct respond
+                return Some(directive.clone());
+            }
+            _ => {
+                // Ignore other directives for now (header, uri_replace)
+                continue;
+            }
+        }
+    }
+    None
+}
+
 async fn proxy(
     mut req: Request<Incoming>,
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
     config: config::Config,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    // Build a new URI
-    // let path = req.uri().path_and_query().map(|x| x.as_str()).unwrap_or("/");
-    let path = req.uri().host().unwrap();
-    println!("{:?} {}", req, path);
-    let site_config = config.sites.get(path).unwrap();
-    // println!("{:?}", site_config);
+    // Get path from URI
+    let path = req.uri().path();
 
-    let target_base = site_config.address.trim_end_matches('/');
-    // let target_base = TARGET.trim_end_matches('/');
-    let full_url = format!("{}{}", target_base, path);
+    // Get host from Host header (includes port, e.g., "localhost:8080")
+    let host = req
+        .headers()
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+
+    println!("Request: {} from {}", path, host);
+
+    // Find site configuration by host (with port!)
+    let site_config = config.sites.get(host).unwrap_or_else(|| {
+        eprintln!("❌ No configuration found for host: {}", host);
+        eprintln!(
+            "Available hosts in config: {:?}",
+            config.sites.keys().collect::<Vec<_>>()
+        );
+        panic!("No configuration found for host: {}", host);
+    });
+
+    // Find matching directive for this path
+    let directive = find_matching_directive(path, site_config).unwrap_or_else(|| {
+        eprintln!("❌ No matching directive for path: {}", path);
+        eprintln!("Available directives: {:?}", site_config.directives);
+        panic!("No matching directive for path: {}", path);
+    });
+
+    // Get backend URL and compute path to send
+    let (backend_url, path_to_send) = match directive {
+        config::Directive::ReverseProxy { to } => (to.clone(), path.to_string()),
+        config::Directive::HandlePath {
+            pattern,
+            directives,
+            ..
+        } => {
+            // Get remaining path after removing prefix
+            let path_to_send =
+                match_pattern(pattern.as_str(), path).unwrap_or_else(|| "/".to_string());
+
+            // Get backend from nested reverse_proxy
+            let backend = directives
+                .iter()
+                .find_map(|d| {
+                    if let config::Directive::ReverseProxy { to } = d {
+                        Some(to.clone())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| panic!("No reverse_proxy in handle_path"));
+
+            (backend, path_to_send)
+        }
+        config::Directive::Respond { status, body } => {
+            // Direct response - return immediately
+            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+            return Ok(Response::builder()
+                .status(status_code)
+                .body(Full::new(Bytes::from(body.clone())))
+                .unwrap());
+        }
+        _ => panic!("Unsupported directive type"),
+    };
+
+    // Add protocol if missing
+    let backend_with_proto =
+        if backend_url.starts_with("http://") || backend_url.starts_with("https://") {
+            backend_url
+        } else {
+            format!("http://{}", backend_url)
+        };
+
+    let full_url = format!("{}{}", backend_with_proto, path_to_send);
+
+    println!("Proxying to: {}", full_url);
 
     let new_uri = match full_url.parse::<Uri>() {
         Ok(uri) => uri,
