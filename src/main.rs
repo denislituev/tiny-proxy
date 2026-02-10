@@ -1,6 +1,9 @@
+mod cli;
 mod config;
 
 use bytes::Bytes;
+use clap::Parser;
+use cli::Cli;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::service::service_fn;
@@ -13,15 +16,19 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
-static TARGET: &str = "http://127.0.0.1:5001";
+/// Tiny Proxy Server - Simple HTTP proxy with Caddy-like configuration
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = config::Config::from_file("./file.caddy")?;
-    //println!("Config: {:?}", config);
+    let cli = Cli::parse();
 
-    let addr: SocketAddr = "127.0.0.1:8080".parse()?;
-    let listener = TcpListener::bind(addr).await?;
+    println!("🚀 Tiny Proxy Server v{}", env!("CARGO_PKG_VERSION"));
+    println!("📄 Loading config from: {}", cli.config);
+
+    let config = config::Config::from_file(&cli.config)?;
+
+    let addr: SocketAddr = cli.addr.parse()?;
+    let listener = TcpListener::bind(&addr).await?;
 
     let https = HttpsConnector::new();
     let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build::<_, Incoming>(https);
@@ -244,10 +251,7 @@ async fn proxy(
 
             // Check error type for more detailed logging
             if e.is_connect() {
-                eprintln!(
-                    "   Reason: Connection refused - backend {} unavailable",
-                    TARGET
-                );
+                eprintln!("   Reason: Connection refused - backend unavailable");
             } else {
                 eprintln!("   Reason: Other connection error");
             }

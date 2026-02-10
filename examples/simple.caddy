@@ -1,0 +1,12 @@
+# Simple proxy configuration
+# This config forwards all requests to a single backend
+
+localhost:8080 {
+    # Forward all requests to backend
+    reverse_proxy localhost:9001
+
+    # Health check endpoint
+    handle_path /health {
+        respond 200 "OK"
+    }
+}

@@ -1,0 +1,19 @@
+localhost:8080 {
+    handle_path /api/v1/users/* {
+        reverse_proxy localhost:9001
+    }
+
+    handle_path /api/v1/orders/* {
+        reverse_proxy localhost:9002
+    }
+
+    handle_path /health {
+        respond 200 "OK"
+    }
+}
+
+localhost:8081 {
+    uri_replace /old-api /v1
+    header X-Gateway-Version "legacy-proxy"
+    reverse_proxy localhost:9001
+}
