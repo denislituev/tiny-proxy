@@ -4,13 +4,16 @@ Simple HTTP proxy server with Caddy-like configuration format written in Rust.
 
 ## Features
 
-- ✅ Simple Caddy-like configuration format
-- ✅ Path-based routing with `handle_path`
-- ✅ Direct responses with `respond`
-- ✅ Multiple backend support
-- ✅ Wildcard path matching
-- ⚡ Fast and lightweight (Rust + Hyper)
-- 🔧 CLI configuration with custom config file and address
+- Simple Caddy-like configuration format
+- Path-based routing with `handle_path`
+- Direct responses with `respond`
+- Multiple backend support
+- Wildcard path matching
+- Header modification with `header` directive
+- URI rewriting with `uri_replace` directive
+- Fast and lightweight (Rust + Hyper)
+- CLI configuration with custom config file and address
+- REST API for dynamic configuration management (coming soon)
 
 ## Installation
 
@@ -59,10 +62,10 @@ cargo run
 ### Example Output
 
 ```
-🚀 Tiny Proxy Server v0.1.0
-📄 Loading config from: ./file.caddy
-🚀 Tiny Proxy listening on http://127.0.0.1:8080
-✅ Loaded 2 site(s)
+Tiny Proxy Server v0.1.0
+Loading config from: ./file.caddy
+Tiny Proxy listening on http://127.0.0.1:8080
+Loaded 2 site(s)
 
 Request: /api/v1/users from localhost:8080
 Proxying to: http://localhost:9001/
@@ -205,23 +208,199 @@ All code comments MUST be in English. See `docs/CODE_GUIDELINES.md` for complete
 
 ## Current Status
 
-### ✅ Implemented
+### Implemented
 - Basic proxy functionality (Task 1.1)
 - Directive matching (Task 1.2)
 - Wildcard pattern matching (Task 2.1)
 - respond directive (Task 2.2)
-- Configuration file parsing
-- CLI argument support
-
-### ⏳ In Progress
 - header directive (Task 2.3)
 - uri_replace directive (Task 2.4)
 - Full directive integration (Task 2.5)
+- Configuration file parsing
+- CLI argument support
+
+### In Progress
 - Unit tests (Task 3.1)
 - Mock backend for tests (Task 3.2)
 - Integration tests (Task 3.3)
 
+### Planned Features
+- **Configuration Management API** (Phase 5)
+  - REST API for dynamic configuration updates without server restart
+  - Hot reload configuration changes
+  - Configuration versioning and rollback
+  - API authentication and security
+  - Configuration validation
+  - Sites management endpoints
+
 See `ex/tasks.md` for detailed task breakdown and `ex/roadmap.md` for development roadmap.
+
+## Configuration Management API (Coming Soon)
+
+The proxy server will include a REST API for dynamic configuration management, allowing you to update the configuration without restarting the server. This feature is inspired by Caddy's admin API and will provide:
+
+### Planned API Endpoints
+
+**Configuration Management:**
+- `GET /config` - Get current configuration (Caddyfile format)
+- `GET /config/json` - Get current configuration (JSON format)
+- `POST /config` - Update existing configuration
+- `PUT /config` - Replace entire configuration
+- `DELETE /config` - Reset to default configuration
+- `GET /config/validate` - Validate configuration without applying
+
+**Sites Management:**
+- `GET /config/sites` - List all sites
+- `GET /config/sites/{host}` - Get specific site configuration
+- `POST /config/sites` - Add new site
+- `PUT /config/sites/{host}` - Update site configuration
+- `DELETE /config/sites/{host}` - Remove site
+
+**Version Control:**
+- `GET /config/history` - Get configuration history
+- `POST /config/rollback/{version}` - Rollback to specific version
+
+**Management:**
+- `POST /config/reload` - Reload configuration
+- `GET /config/version` - Get current configuration version
+- `GET /config/status` - Get configuration status
+
+### Key Features
+
+- **Hot Reload**: Update configuration without server restart
+- **Atomic Updates**: Configuration changes are applied atomically
+- **Rollback**: Easy rollback to previous working configuration
+- **Validation**: Configuration validation before applying changes
+- **Authentication**: API key-based authentication for security
+- **Graceful Transition**: Existing connections complete with old configuration
+
+### Usage Example
+
+```bash
+# Get current configuration
+curl http://localhost:8082/config
+
+# Add new site
+curl -X POST http://localhost:8082/config/sites \
+  -H "Authorization: Bearer your-api-key" \
+  -d 'localhost:9090 {
+       reverse_proxy backend:3000
+     }'
+
+# Validate configuration
+curl -X POST http://localhost:8082/config/validate \
+  -H "Content-Type: text/plain" \
+  -d @new-config.caddy
+
+# Rollback to previous version
+curl -X POST http://localhost:8082/config/rollback/1 \
+  -H "Authorization: Bearer your-api-key"
+```
+
+This feature will make the proxy server production-ready for dynamic environments where configuration changes need to be applied without downtime.
+
+## Simplified Authentication via Headers (Coming Soon)
+
+The proxy server will support simplified authentication through headers instead of implementing full OIDC integration like Caddy's `authproxy` directive. This approach provides flexibility while keeping the implementation lightweight and manageable.
+
+### Key Features
+
+- **Header Substitution**: Pass headers from client to upstream
+  - Syntax: `header Authorization "{header.Authorization}"`
+  - Forward existing headers: `header X-Forwarded-For "{header.X-Forwarded-For}"`
+
+- **Request ID Generation**: Automatic UUID generation for tracing
+  - Syntax: `header X-Request-Id "{uuid}"`
+  - Support for existing IDs from clients
+
+- **Environment Variables**: Secure token storage
+  - Syntax: `header Authorization "Bearer {env.API_TOKEN}"`
+  - Default values: `header Authorization "Bearer {env.API_TOKEN:default-token}"`
+
+- **Static Token Authentication**: Service-to-service communication
+  - Direct token specification in config
+  - Different tokens for different routes
+
+- **Token Validation via External Service** (optional)
+  - Directive: `validate_token <url>`
+  - Delegates token validation to external service
+  - Handles 401/403 responses appropriately
+
+### Configuration Examples
+
+```caddy
+# Bearer Token Authorization
+localhost:8099 {
+    handle_path /api/* {
+        # Forward client's Authorization header
+        header Authorization "{header.Authorization}"
+        # Add request ID
+        header X-Request-Id "{uuid}"
+        reverse_proxy dev-constructor.dev:443
+    }
+}
+
+# Static Token for Service-to-Service
+localhost:8099 {
+    handle_path /api/platform/* {
+        header Authorization "Bearer {env.PLATFORM_TOKEN}"
+        header X-Service-Id "platform-api"
+        reverse_proxy dev-constructor.dev:443
+    }
+
+    handle_path /api/webui/* {
+        header Authorization "Bearer {env.WEBUI_TOKEN}"
+        header X-Service-Id "web-ui"
+        reverse_proxy dev-constructor.dev:443
+    }
+}
+
+# Token Validation via External Service
+localhost:8099 {
+    handle_path /api/* {
+        # Validate token first
+        validate_token http://token-validator:8080/validate
+        
+        # Add user context
+        header Authorization "{header.Authorization}"
+        header X-User-Id "{env.DEFAULT_USER_ID}"
+        
+        reverse_proxy dev-constructor.dev:443
+    }
+}
+```
+
+### Comparison with Caddy's authproxy
+
+| Feature | Caddy authproxy | Tiny-proxy (Simplified) |
+|---------|-----------------|------------------------|
+| OIDC Integration | Full | No (simplified) |
+| Login Redirect | Automatic | No |
+| JWT Validation | Built-in | External service |
+| Token in Headers | Automatic | Via header directive |
+| Service-to-Service | Secrets | Static tokens |
+| Request ID | Automatic | Generation |
+| Session Management | Full | No |
+| Implementation Complexity | High | Low |
+
+### Why Simplified Authentication?
+
+The simplified approach provides:
+
+1. **Simpler Implementation**: No need for full OIDC/OpenID Connect libraries
+2. **Flexibility**: Works with any authentication system that uses headers
+3. **Security**: Tokens stored securely via environment variables
+4. **Performance**: No overhead from session management or JWT validation
+5. **Integration**: Easy integration with existing auth providers
+
+This makes the proxy suitable for:
+- Service-to-service communication with static tokens
+- Gateway proxies that forward authentication headers
+- Development environments with simplified auth
+- Organizations using external token validation services
+
+For production OIDC integration, consider using Caddy's authproxy plugin or implementing a dedicated auth gateway before the proxy.
+
 
 ## Testing
 
@@ -264,8 +443,10 @@ k6 run tests/load-test.js
 - `reverse_proxy <url>` - Forward requests to backend
 - `handle_path <pattern> { ... }` - Route based on path pattern
 - `respond <status> <body>` - Return direct response
-- `header <name> <value>` - Add/modify headers (in progress)
-- `uri_replace <find> <replace>` - Rewrite request URI (in progress)
+- `header <name> <value>` - Add/modify headers
+- `uri_replace <find> <replace>` - Rewrite request URI
+- `validate_token <url>` - Validate tokens via external service (coming soon)
+- Header substitution: `{header.Name}`, `{uuid}`, `{env.VAR}` (coming soon)
 
 ## License
 
