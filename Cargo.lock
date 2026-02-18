@@ -598,20 +598,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proxy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "clap",
- "http-body-util",
- "hyper",
- "hyper-tls",
- "hyper-util",
- "tokio",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -772,6 +758,20 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tiny-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "http-body-util",
+ "hyper",
+ "hyper-tls",
+ "hyper-util",
+ "tokio",
 ]
 
 [[package]]
