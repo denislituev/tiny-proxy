@@ -1,3 +1,4 @@
+use anyhow::Error;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -6,11 +7,10 @@ use hyper::{Request, Response, StatusCode, Uri};
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
-
 use hyper_util::rt::TokioIo;
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tracing::{error, info};
 
 use crate::config::Config;
 
@@ -54,7 +54,7 @@ pub fn process_directives(
     directives: &[crate::config::Directive],
     req: &mut Request<Incoming>,
     current_path: &str,
-) -> ActionResult {
+) -> Result<ActionResult, String> {
     let mut modified_path = current_path.to_string();
 
     for directive in directives {
@@ -64,7 +64,7 @@ pub fn process_directives(
                 if let Ok(header_name) = hyper::header::HeaderName::from_bytes(name.as_bytes()) {
                     if let Ok(header_value) = hyper::header::HeaderValue::from_str(value.as_str()) {
                         req.headers_mut().insert(header_name, header_value);
-                        println!("   Applied header: {}", name);
+                        info!("   Applied header: {}", name);
                     }
                 }
             }
@@ -72,7 +72,7 @@ pub fn process_directives(
             // Apply URI replacements
             crate::config::Directive::UriReplace { find, replace } => {
                 modified_path = modified_path.replace(find, replace);
-                println!("   Applied uri_replace: {} → {}", find, replace);
+                info!("   Applied uri_replace: {} → {}", find, replace);
             }
 
             // Handle path-based routing recursively
@@ -81,7 +81,7 @@ pub fn process_directives(
                 directives: nested_directives,
             } => {
                 if let Some(remaining_path) = match_pattern(pattern, &modified_path) {
-                    println!("   Matched handle_path: {}", pattern);
+                    info!("   Matched handle_path: {}", pattern);
                     // Recursively process nested directives with remaining path
                     return process_directives(nested_directives, req, &remaining_path);
                 }
@@ -89,28 +89,30 @@ pub fn process_directives(
 
             // Direct response - return immediately
             crate::config::Directive::Respond { status, body } => {
-                println!("   Returning direct response: {}", status);
-                return ActionResult::Respond {
+                info!("   Returning direct response: {}", status);
+                return Ok(ActionResult::Respond {
                     status: *status,
                     body: body.clone(),
-                };
+                });
             }
 
             // Reverse proxy - return action with current (possibly modified) path
             crate::config::Directive::ReverseProxy { to } => {
-                println!("   Proxying to: {}", to);
-                return ActionResult::ReverseProxy {
+                info!("   Proxying to: {}", to);
+                return Ok(ActionResult::ReverseProxy {
                     backend_url: to.clone(),
                     path_to_send: modified_path,
-                };
+                });
             }
 
             _ => continue,
         }
     }
 
-    // No action found - this is a configuration error
-    panic!("No action directive (respond or reverse_proxy) found in configuration");
+    Err(format!(
+        "No action directive (respond or reverse_proxy) found in configuration for path: {}",
+        current_path
+    ))
 }
 
 /// Creates HTTP response with error
@@ -150,7 +152,7 @@ pub async fn start_proxy(
     let https = HttpsConnector::new();
     let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build::<_, Incoming>(https);
 
-    println!("Tiny Proxy listening on http://{}", addr);
+    info!("Tiny Proxy listening on http://{}", addr);
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -168,7 +170,7 @@ pub async fn start_proxy(
                 .serve_connection(io, service)
                 .await
             {
-                eprintln!("Error serving connection: {:?}", err);
+                error!("Error serving connection: {:?}", err);
             }
         });
     }
@@ -179,7 +181,7 @@ async fn proxy(
     mut req: Request<Incoming>,
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
     config: Config,
-) -> Result<Response<Full<Bytes>>, Infallible> {
+) -> Result<Response<Full<Bytes>>, Error> {
     // Get path from URI
     let path = req.uri().path().to_string();
 
@@ -190,20 +192,21 @@ async fn proxy(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost");
 
-    println!("Request: {} from {}", path, host);
+    info!("Request: {} from {}", path, host);
 
     // Find site configuration by host (with port!)
-    let site_config = config.sites.get(host).unwrap_or_else(|| {
-        eprintln!("No configuration found for host: {}", host);
-        eprintln!(
+    let site_config = config.sites.get(host).ok_or_else(|| {
+        error!("No configuration found for host: {}", host);
+        error!(
             "Available hosts in config: {:?}",
             config.sites.keys().collect::<Vec<_>>()
         );
-        panic!("No configuration found for host: {}", host);
-    });
+        anyhow::Error::msg(format!("No configuration found for host: {}", host))
+    })?;
 
     // Process directives in correct order
-    let action_result = process_directives(&site_config.directives, &mut req, &path);
+    let action_result =
+        process_directives(&site_config.directives, &mut req, &path).map_err(anyhow::Error::msg)?;
 
     // Execute action
     match action_result {
@@ -228,14 +231,14 @@ async fn proxy(
 
             let full_url = format!("{}{}", backend_with_proto, path_to_send);
 
-            println!("Proxying to: {}", full_url);
-            println!("   Original path: {}", path);
-            println!("   Modified path: {}", path_to_send);
+            info!("Proxying to: {}", full_url);
+            info!("   Original path: {}", path);
+            info!("   Modified path: {}", path_to_send);
 
             let new_uri = match full_url.parse::<Uri>() {
                 Ok(uri) => uri,
                 Err(e) => {
-                    eprintln!("Invalid URI: {:?}", e);
+                    error!("Invalid URI: {:?}", e);
                     return Ok(error_response(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Invalid proxy URI",
@@ -274,7 +277,7 @@ async fn proxy(
                             Ok(builder.body(Full::new(bytes)).unwrap())
                         }
                         Err(e) => {
-                            eprintln!("Error reading response body: {:?}", e);
+                            error!("Error reading response body: {:?}", e);
                             Ok(error_response(
                                 StatusCode::BAD_GATEWAY,
                                 "Error reading backend response",
@@ -285,13 +288,13 @@ async fn proxy(
                 Err(e) => {
                     // Backend unavailable - return 502 Bad Gateway
                     let error_msg = format!("{:?}", e);
-                    eprintln!("Backend connection failed: {}", error_msg);
+                    error!("Backend connection failed: {}", error_msg);
 
                     // Check error type for more detailed logging
                     if e.is_connect() {
-                        eprintln!("   Reason: Connection refused - backend unavailable");
+                        error!("   Reason: Connection refused - backend unavailable");
                     } else {
-                        eprintln!("   Reason: Other connection error");
+                        error!("   Reason: Other connection error");
                     }
 
                     Ok(error_response(
