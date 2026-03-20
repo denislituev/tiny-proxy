@@ -1,5 +1,6 @@
 use clap::Parser;
 
+/// Command line arguments for the proxy server
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {

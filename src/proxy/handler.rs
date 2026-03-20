@@ -2,51 +2,18 @@ use anyhow::Error;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
-use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode, Uri};
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
-use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
-use tokio::net::TcpListener;
 use tracing::{error, info};
 
-use crate::config::Config;
+use crate::config::{Config};
+use crate::proxy::ActionResult;
 
-/// Result of directive processing
-#[derive(Debug, Clone)]
-pub enum ActionResult {
-    Respond {
-        status: u16,
-        body: String,
-    },
-    ReverseProxy {
-        backend_url: String,
-        path_to_send: String,
-    },
-}
-
-/// Match path against pattern (supports wildcard *)
-/// Returns Some(remaining_path) if match, None otherwise
-pub fn match_pattern(pattern: &str, path: &str) -> Option<String> {
-    if pattern.ends_with("/*") {
-        let prefix = &pattern[..pattern.len() - 2];
-        if path.starts_with(prefix) {
-            // Remove prefix and return remaining path
-            let remaining = path.strip_prefix(prefix).unwrap_or(path);
-            Some(remaining.to_string())
-        } else {
-            None
-        }
-    } else {
-        if pattern == path {
-            Some("/".to_string()) // Exact match, send root
-        } else {
-            None
-        }
-    }
-}
+use crate::proxy::directives::{
+    handle_header, handle_method, handle_respond, handle_reverse_proxy, handle_uri_replace,
+};
 
 /// Process directives in order, applying modifications and returning final action
 /// Supports recursive handling of handle_path blocks
@@ -59,20 +26,16 @@ pub fn process_directives(
 
     for directive in directives {
         match directive {
-            // Apply header modifications
+            // Apply header modifications using directive handler
             crate::config::Directive::Header { name, value } => {
-                if let Ok(header_name) = hyper::header::HeaderName::from_bytes(name.as_bytes()) {
-                    if let Ok(header_value) = hyper::header::HeaderValue::from_str(value.as_str()) {
-                        req.headers_mut().insert(header_name, header_value);
-                        info!("   Applied header: {}", name);
-                    }
+                if let Err(e) = handle_header(name, value, req) {
+                    info!("   Failed to apply header {}: {}", name, e);
                 }
             }
 
-            // Apply URI replacements
+            // Apply URI replacements using directive handler
             crate::config::Directive::UriReplace { find, replace } => {
-                modified_path = modified_path.replace(find, replace);
-                info!("   Applied uri_replace: {} → {}", find, replace);
+                handle_uri_replace(find, replace, &mut modified_path);
             }
 
             // Handle path-based routing recursively
@@ -87,25 +50,27 @@ pub fn process_directives(
                 }
             }
 
-            // Direct response - return immediately
+            // Method-based directives
+            crate::config::Directive::Method {
+                methods,
+                directives: nested_directives,
+            } => {
+                if handle_method(methods, req) {
+                    info!("   Matched method directive");
+                    // Process nested directives with same path
+                    return process_directives(nested_directives, req, &modified_path);
+                }
+            }
+
+            // Direct response - return immediately using directive handler
             crate::config::Directive::Respond { status, body } => {
-                info!("   Returning direct response: {}", status);
-                return Ok(ActionResult::Respond {
-                    status: *status,
-                    body: body.clone(),
-                });
+                return Ok(handle_respond(status, body));
             }
 
-            // Reverse proxy - return action with current (possibly modified) path
+            // Reverse proxy - return action using directive handler
             crate::config::Directive::ReverseProxy { to } => {
-                info!("   Proxying to: {}", to);
-                return Ok(ActionResult::ReverseProxy {
-                    backend_url: to.clone(),
-                    path_to_send: modified_path,
-                });
+                return Ok(handle_reverse_proxy(to, &modified_path));
             }
-
-            _ => continue,
         }
     }
 
@@ -115,69 +80,8 @@ pub fn process_directives(
     ))
 }
 
-/// Creates HTTP response with error
-pub fn error_response(status: StatusCode, message: &str) -> Response<Full<Bytes>> {
-    let body = format!(
-        r#"<!DOCTYPE html>
-        <html>
-        <head><title>{} {}</title></head>
-        <body>
-        <h1>{} {}</h1>
-        <p>{}</p>
-        <hr>
-        <p><em>Rust Proxy Server</em></p>
-        </body>
-        </html>"#,
-        status.as_u16(),
-        status.canonical_reason().unwrap_or("Error"),
-        status.as_u16(),
-        status.canonical_reason().unwrap_or("Error"),
-        message
-    );
-
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(Full::new(Bytes::from(body)))
-        .unwrap()
-}
-
-/// Start the proxy server on the specified address
-pub async fn start_proxy(
-    addr: SocketAddr,
-    config: Config,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let listener = TcpListener::bind(&addr).await?;
-
-    let https = HttpsConnector::new();
-    let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build::<_, Incoming>(https);
-
-    info!("Tiny Proxy listening on http://{}", addr);
-
-    loop {
-        let (stream, _) = listener.accept().await?;
-        let io = TokioIo::new(stream);
-        let client = client.clone();
-        let config = config.clone();
-
-        tokio::task::spawn(async move {
-            let service = service_fn(move |req| {
-                let client = client.clone();
-                proxy(req, client, config.clone())
-            });
-
-            if let Err(err) = hyper::server::conn::http1::Builder::new()
-                .serve_connection(io, service)
-                .await
-            {
-                error!("Error serving connection: {:?}", err);
-            }
-        });
-    }
-}
-
 /// Process a single request through the proxy
-async fn proxy(
+pub async fn proxy(
     mut req: Request<Incoming>,
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
     config: Config,
@@ -195,14 +99,16 @@ async fn proxy(
     info!("Request: {} from {}", path, host);
 
     // Find site configuration by host (with port!)
-    let site_config = config.sites.get(host).ok_or_else(|| {
-        error!("No configuration found for host: {}", host);
-        error!(
-            "Available hosts in config: {:?}",
-            config.sites.keys().collect::<Vec<_>>()
-        );
-        anyhow::Error::msg(format!("No configuration found for host: {}", host))
-    })?;
+    let site_config = match config.sites.get(host) {
+        Some(config) => config,
+        None => {
+            error!("No configuration found for host: {}", host);
+            return Ok(error_response(
+                StatusCode::NOT_FOUND,
+                &format!("No configuration found for host: {}", host)
+            ));
+        }
+    };
 
     // Process directives in correct order
     let action_result =
@@ -303,6 +209,54 @@ async fn proxy(
                     ))
                 }
             }
+        }
+    }
+}
+
+/// Creates HTTP response with error
+pub fn error_response(status: StatusCode, message: &str) -> Response<Full<Bytes>> {
+    let body = format!(
+        r#"<!DOCTYPE html>
+        <html>
+        <head><title>{} {}</title></head>
+        <body>
+        <h1>{} {}</h1>
+        <p>{}</p>
+        <hr>
+        <p><em>Rust Proxy Server</em></p>
+        </body>
+        </html>"#,
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("Error"),
+        status.as_u16(),
+        status.canonical_reason().unwrap_or("Error"),
+        message
+    );
+
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(Full::new(Bytes::from(body)))
+        .unwrap()
+}
+
+/// Match path against pattern (supports wildcard *)
+/// Returns Some(remaining_path) if match, None otherwise
+pub fn match_pattern(pattern: &str, path: &str) -> Option<String> {
+    if pattern.ends_with("/*") {
+        let prefix = &pattern[..pattern.len() - 2];
+        if path.starts_with(prefix) {
+            // Remove prefix and return remaining path
+            let remaining = path.strip_prefix(prefix).unwrap_or(path);
+            Some(remaining.to_string())
+        } else {
+            None
+        }
+    } else {
+        if pattern == path {
+            Some("/".to_string()) // Exact match, send root
+        } else {
+            None
         }
     }
 }

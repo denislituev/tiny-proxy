@@ -1,46 +1,7 @@
-// src/config.rs
+use crate::config::{Config, Directive, SiteConfig};
+use crate::error::ProxyError;
 use std::collections::HashMap;
 
-// Models remain the same as we designed
-#[derive(Debug, Clone)]
-pub struct Config {
-    pub sites: HashMap<String, SiteConfig>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SiteConfig {
-    pub address: String,
-    pub directives: Vec<Directive>,
-}
-
-#[derive(Debug, Clone)]
-pub enum Directive {
-    ReverseProxy {
-        to: String,
-    },
-    HandlePath {
-        pattern: String,
-        directives: Vec<Directive>,
-    },
-    UriReplace {
-        find: String,
-        replace: String,
-    },
-    Header {
-        name: String,
-        value: String,
-    },
-    Method {
-        methods: Vec<String>,
-        directives: Vec<Directive>,
-    },
-    Respond {
-        status: u16,
-        body: String,
-    },
-}
-
-// Helper structure to store information about the block we are currently parsing
 #[derive(Debug)]
 struct PendingBlock {
     directive_type: String, // "handle_path", "method", etc.
@@ -48,12 +9,12 @@ struct PendingBlock {
 }
 
 impl Config {
-    pub fn from_file(path: &str) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    pub fn from_file(path: &str) -> Result<Self, ProxyError> {
+        let content = std::fs::read_to_string(path)?;
         Self::from_str(&content)
     }
 
-    pub fn from_str(content: &str) -> Result<Self, String> {
+    pub fn from_str(content: &str) -> Result<Self, ProxyError> {
         let mut sites = HashMap::new();
         let mut current_site_address: Option<String> = None;
 
@@ -114,10 +75,10 @@ impl Config {
                             directives: finished_directives,
                         },
                         _ => {
-                            return Err(format!(
+                            return Err(ProxyError::Parse(format!(
                                 "Unknown block type: {}",
                                 block_info.directive_type
-                            ))
+                            )))
                         }
                     };
 
@@ -154,45 +115,39 @@ impl Config {
 
             let directive = match directive_name {
                 "reverse_proxy" => {
-                    let to = args
-                        .get(0)
-                        .cloned()
-                        .ok_or("Missing backend URL for reverse_proxy")?;
+                    let to = args.get(0).cloned().ok_or_else(|| {
+                        ProxyError::Parse("Missing backend URL for reverse_proxy".to_string())
+                    })?;
                     Directive::ReverseProxy { to: to.to_string() }
                 }
                 "uri_replace" => {
-                    let find = args
-                        .get(0)
-                        .cloned()
-                        .ok_or("Missing 'find' arg for uri_replace")?;
-                    let replace = args
-                        .get(1)
-                        .cloned()
-                        .ok_or("Missing 'replace' arg for uri_replace")?;
+                    let find = args.get(0).cloned().ok_or_else(|| {
+                        ProxyError::Parse("Missing 'find' arg for uri_replace".to_string())
+                    })?;
+                    let replace = args.get(1).cloned().ok_or_else(|| {
+                        ProxyError::Parse("Missing 'replace' arg for uri_replace".to_string())
+                    })?;
                     Directive::UriReplace {
                         find: find.to_string(),
                         replace: replace.to_string(),
                     }
                 }
                 "header" => {
-                    let name = args
-                        .get(0)
-                        .cloned()
-                        .ok_or("Missing 'name' arg for header")?;
-                    let value = args
-                        .get(1)
-                        .cloned()
-                        .ok_or("Missing 'value' arg for header")?;
+                    let name = args.get(0).cloned().ok_or_else(|| {
+                        ProxyError::Parse("Missing 'name' arg for header".to_string())
+                    })?;
+                    let value = args.get(1).cloned().ok_or_else(|| {
+                        ProxyError::Parse("Missing 'value' arg for header".to_string())
+                    })?;
                     Directive::Header {
                         name: name.to_string(),
                         value: value.to_string(),
                     }
                 }
                 "respond" => {
-                    let status = args
-                        .get(0)
-                        .and_then(|s| s.parse().ok())
-                        .ok_or("Invalid status for respond")?;
+                    let status = args.get(0).and_then(|s| s.parse().ok()).ok_or_else(|| {
+                        ProxyError::Parse("Invalid status for respond".to_string())
+                    })?;
                     let body = args.get(1).cloned().unwrap_or_default();
                     Directive::Respond {
                         status,
@@ -200,11 +155,11 @@ impl Config {
                     }
                 }
                 _ => {
-                    return Err(format!(
+                    return Err(ProxyError::Parse(format!(
                         "Unknown directive '{}' on line {}",
                         directive_name,
                         line_num + 1
-                    ))
+                    )))
                 }
             };
 
