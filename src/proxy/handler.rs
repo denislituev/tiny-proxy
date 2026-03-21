@@ -302,22 +302,6 @@ pub async fn proxy(
     }
 }
 
-/// Creates HTTP response with direct body (not from backend)
-///
-/// Used for Respond directive and error responses
-fn direct_response(status: StatusCode, body: String) -> Response<ResponseBody> {
-    let full = Full::new(Bytes::from(body));
-    let boxed: ResponseBody = full
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-        .boxed();
-
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/plain; charset=utf-8")
-        .body(boxed)
-        .unwrap()
-}
-
 /// Creates HTTP response with error
 fn error_response(status: StatusCode, message: &str) -> Response<ResponseBody> {
     let body = format!(
