@@ -1,10 +1,12 @@
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_tls::HttpsConnector;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
@@ -23,7 +25,7 @@ use crate::proxy::handler::proxy;
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
-///     let config = Config::from_file("config.caddy")?;
+///     let config = Config::from_file("file.caddy")?;
 ///     let proxy = Proxy::new(config);
 ///     proxy.start("127.0.0.1:8080").await?;
 ///     Ok(())
@@ -31,7 +33,7 @@ use crate::proxy::handler::proxy;
 /// ```
 pub struct Proxy {
     config: Config,
-    client: Client<HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>, Incoming>,
+    client: Client<HttpsConnector<HttpConnector>, Incoming>,
 }
 
 impl Proxy {
@@ -45,7 +47,11 @@ impl Proxy {
     ///
     /// A new `Proxy` instance ready to be started
     pub fn new(config: Config) -> Self {
-        let https = HttpsConnector::new();
+        let mut http = HttpConnector::new();
+        http.set_keepalive(Some(Duration::from_secs(60)));
+        http.set_nodelay(true);
+        let https = HttpsConnector::new_with_connector(http);
+
         let client = Client::builder(TokioExecutor::new()).build::<_, Incoming>(https);
 
         Self { config, client }
