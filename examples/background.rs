@@ -31,8 +31,8 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Loaded configuration for {} site(s)", config.sites.len());
 
-    // Create proxy instance
-    let proxy = Proxy::new(config);
+    // Create proxy instance wrapped in Arc for thread-safe sharing
+    let proxy = std::sync::Arc::new(Proxy::new(config));
 
     // Spawn the proxy in a background task
     let proxy_handle = tokio::spawn(async move {

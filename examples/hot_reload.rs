@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Create proxy instance
-    let proxy = Proxy::new(config.clone());
+    let proxy = std::sync::Arc::new(Proxy::new(config));
 
     // Spawn the proxy in a background task
     let _proxy_handle = tokio::spawn(async move {
