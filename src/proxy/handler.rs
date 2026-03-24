@@ -175,24 +175,16 @@ pub async fn proxy(
                     format!("http://{}", backend_url)
                 };
 
-            let full_url = format!("{}{}", backend_with_proto, path_to_send);
+            // Use Uri::from_parts() instead of format!() + parse() - faster!
+            let mut parts = backend_with_proto.parse::<Uri>()?.into_parts();
+            parts.path_and_query = Some(path_to_send.parse()?);
+            let new_uri = Uri::from_parts(parts)?;
 
             // Logging with enabled check to avoid string formatting when disabled
             if tracing::enabled!(tracing::Level::INFO) {
                 // Removed info logging from hot path for performance
                 // Use DEBUG level if needed for troubleshooting
             }
-
-            let new_uri = match full_url.parse::<Uri>() {
-                Ok(uri) => uri,
-                Err(e) => {
-                    error!("Invalid URI: {:?}", e);
-                    return Ok(error_response(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Invalid proxy URI",
-                    ));
-                }
-            };
 
             *req.uri_mut() = new_uri.clone();
 
