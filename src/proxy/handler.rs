@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use anyhow::Error;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -8,6 +7,7 @@ use hyper::{Request, Response, StatusCode, Uri};
 use hyper_tls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
+use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use tracing::{error, info};
 
@@ -22,17 +22,6 @@ use crate::proxy::directives::{
 /// This allows us to support SSE streaming while maintaining a simple API
 type ResponseBody =
     http_body_util::combinators::BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
-
-/// Check if header is SSE (text/event-stream)
-///
-/// SSE responses have Content-Type: text/event-stream
-fn is_sse_response(headers: &hyper::HeaderMap) -> bool {
-    headers
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(|ct| ct.starts_with("text/event-stream"))
-        .unwrap_or(false)
-}
 
 /// Check if header is hop-by-hop (should not be proxied)
 ///
@@ -133,7 +122,7 @@ pub async fn proxy(
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
     config: Arc<Config>,
 ) -> Result<Response<ResponseBody>, Error> {
-    // Get path from URI
+    // Get path from URI (using String to avoid borrow conflict with mutable req)
     let path = req.uri().path().to_string();
 
     // Get host from Host header (includes port, e.g., "localhost:8080")
@@ -143,7 +132,11 @@ pub async fn proxy(
         .and_then(|h| h.to_str().ok())
         .unwrap_or("localhost");
 
-    info!("Request: {} from {}", path, host);
+    // Logging with enabled check to avoid string formatting when disabled
+    if tracing::enabled!(tracing::Level::INFO) {
+        // Removed info logging from hot path for performance
+        // Use DEBUG level if needed for troubleshooting
+    }
 
     // Find site configuration by host (with port!)
     let site_config = match config.sites.get(host) {
@@ -184,9 +177,11 @@ pub async fn proxy(
 
             let full_url = format!("{}{}", backend_with_proto, path_to_send);
 
-            info!("Proxying to: {}", full_url);
-            info!("   Original path: {}", path);
-            info!("   Modified path: {}", path_to_send);
+            // Logging with enabled check to avoid string formatting when disabled
+            if tracing::enabled!(tracing::Level::INFO) {
+                // Removed info logging from hot path for performance
+                // Use DEBUG level if needed for troubleshooting
+            }
 
             let new_uri = match full_url.parse::<Uri>() {
                 Ok(uri) => uri,
@@ -202,12 +197,8 @@ pub async fn proxy(
             *req.uri_mut() = new_uri.clone();
 
             // Save original host for X-Forwarded headers
-            let original_host = req
-                .headers()
-                .get(hyper::header::HOST)
-                .and_then(|h| h.to_str().ok())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            // Clone HeaderValue directly - 0 allocations!
+            let original_host_header = req.headers().get(hyper::header::HOST).cloned();
 
             // Update Host header for backend
             req.headers_mut().remove(hyper::header::HOST);
@@ -219,20 +210,33 @@ pub async fn proxy(
 
             // Add X-Forwarded-* headers for backend visibility
             // X-Forwarded-Host: original Host header from client
-            if let Ok(host_value) = original_host.parse::<hyper::header::HeaderValue>() {
+            if let Some(host_value) = original_host_header.clone() {
                 req.headers_mut().insert("X-Forwarded-Host", host_value);
             }
 
             // X-Forwarded-Proto: scheme from original request (http or https)
             let original_scheme = req.uri().scheme_str().unwrap_or("http");
-            if let Ok(proto_value) = original_scheme.parse::<hyper::header::HeaderValue>() {
-                req.headers_mut().insert("X-Forwarded-Proto", proto_value);
+            // Use from_static for known values - 0 allocations!
+            match original_scheme {
+                "http" => {
+                    req.headers_mut().insert(
+                        "X-Forwarded-Proto",
+                        hyper::header::HeaderValue::from_static("http"),
+                    );
+                }
+                "https" => {
+                    req.headers_mut().insert(
+                        "X-Forwarded-Proto",
+                        hyper::header::HeaderValue::from_static("https"),
+                    );
+                }
+                _ => {} // ignore unknown schemes
             }
 
             // X-Forwarded-For: client IP address
             // TODO: Extract real client IP from connection info
             // For now, we can use the original host as a placeholder
-            if let Ok(for_value) = original_host.parse::<hyper::header::HeaderValue>() {
+            if let Some(for_value) = original_host_header {
                 req.headers_mut().insert("X-Forwarded-For", for_value);
             }
 
@@ -250,9 +254,12 @@ pub async fn proxy(
                     // Successfully received response from backend
                     let status = response.status();
                     let headers = response.headers().clone();
-                    let is_sse = is_sse_response(&headers);
 
-                    info!("   Backend response status: {}, SSE: {}", status, is_sse);
+                    // Logging with enabled check to avoid string formatting when disabled
+                    if tracing::enabled!(tracing::Level::INFO) {
+                        // Removed info logging from hot path for performance
+                        // Use DEBUG level if needed for troubleshooting
+                    }
 
                     // Stream response body directly (no buffering)
                     let mut builder = Response::builder().status(status);
