@@ -6,9 +6,11 @@ use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tracing::{error, info};
+use tokio::sync::Semaphore;
+use tracing::{info, warn};
 
 use crate::config::Config;
 use crate::proxy::handler::proxy;
@@ -34,6 +36,8 @@ use crate::proxy::handler::proxy;
 pub struct Proxy {
     config: Config,
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
+    max_concurrency: usize,
+    semaphore: Arc<Semaphore>,
 }
 
 impl Proxy {
@@ -52,9 +56,30 @@ impl Proxy {
         http.set_nodelay(true);
         let https = HttpsConnector::new_with_connector(http);
 
-        let client = Client::builder(TokioExecutor::new()).build::<_, Incoming>(https);
+        let client = Client::builder(TokioExecutor::new())
+            .pool_max_idle_per_host(100)
+            .pool_idle_timeout(Duration::from_secs(90))
+            .build::<_, Incoming>(https);
 
-        Self { config, client }
+        let max_concurrency = std::env::var("TINY_PROXY_MAX_CONCURRENCY")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or_else(|| num_cpus::get() * 256);
+
+        let semaphore = Arc::new(Semaphore::new(max_concurrency));
+
+        info!(
+            "Proxy initialized with max_concurrency={} (default: {})",
+            max_concurrency,
+            num_cpus::get() * 256
+        );
+
+        Self {
+            config,
+            client,
+            max_concurrency,
+            semaphore,
+        }
     }
 
     /// Start the proxy server on the specified address
@@ -111,39 +136,84 @@ impl Proxy {
         let listener = TcpListener::bind(&addr).await?;
 
         info!("Tiny Proxy listening on http://{}", addr);
+        info!(
+            "Max concurrency: {} ({})",
+            self.max_concurrency,
+            if self.max_concurrency == num_cpus::get() * 256 {
+                "default"
+            } else {
+                "custom"
+            }
+        );
 
         loop {
             let (stream, _) = listener.accept().await?;
             let io = TokioIo::new(stream);
             let client = self.client.clone();
-            let config = self.config.clone();
+            let config = Arc::new(self.config.clone());
+            let semaphore = self.semaphore.clone();
 
-            tokio::task::spawn(async move {
-                let service = service_fn(move |req| {
-                    let client = client.clone();
-                    proxy(req, client, config.clone())
-                });
+            match semaphore.try_acquire_owned() {
+                Ok(permit) => {
+                    tokio::task::spawn(async move {
+                        let _permit = permit;
+                        let service = service_fn(move |req| {
+                            let client = client.clone();
+                            let config = config.clone();
+                            proxy(req, client, config)
+                        });
 
-                if let Err(err) = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(io, service)
-                    .await
-                {
-                    error!("Error serving connection: {:?}", err);
+                        let mut builder = hyper::server::conn::http1::Builder::new();
+                        builder.keep_alive(true).pipeline_flush(false);
+
+                        builder.serve_connection(io, service).await
+                    });
                 }
-            });
+                Err(_) => {
+                    warn!(
+                        "Concurrency limit exceeded ({}), rejecting connection",
+                        self.max_concurrency
+                    );
+                }
+            }
         }
     }
 
-    /// Get a reference to the current configuration
+    /// Get a reference to current configuration
     ///
-    /// This allows inspection of the current proxy configuration
+    /// This allows inspection of current proxy configuration
     /// without modifying it.
     ///
     /// # Returns
     ///
-    /// Reference to the current `Config`
+    /// Reference to current `Config`
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    /// Get current concurrency limit
+    ///
+    /// # Returns
+    ///
+    /// Current maximum number of concurrent connections
+    pub fn max_concurrency(&self) -> usize {
+        self.max_concurrency
+    }
+
+    /// Update concurrency limit at runtime
+    ///
+    /// # Arguments
+    ///
+    /// * `max` - New maximum number of concurrent connections
+    ///
+    /// # Note
+    ///
+    /// This updates the semaphore immediately. New connections will use
+    /// the new limit, but existing connections are not affected.
+    pub fn set_max_concurrency(&mut self, max: usize) {
+        self.max_concurrency = max;
+        self.semaphore = Arc::new(Semaphore::new(max));
+        info!("Max concurrency updated to {}", max);
     }
 
     /// Update the configuration

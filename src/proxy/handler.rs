@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use anyhow::Error;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -130,7 +131,7 @@ pub fn process_directives(
 pub async fn proxy(
     mut req: Request<Incoming>,
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
-    config: Config,
+    config: Arc<Config>,
 ) -> Result<Response<ResponseBody>, Error> {
     // Get path from URI
     let path = req.uri().path().to_string();

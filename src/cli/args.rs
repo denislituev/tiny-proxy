@@ -12,6 +12,10 @@ pub struct Cli {
     #[arg(short = 'a', long, default_value = "127.0.0.1:8080")]
     pub addr: String,
 
+    /// Max concurrent connections (default: CPU cores * 256, use 0 for default)
+    #[arg(long, default_value_t = 0)]
+    pub max_concurrency: usize,
+
     /// Enable management API server (requires 'api' feature)
     #[arg(long)]
     pub enable_api: bool,

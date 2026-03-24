@@ -40,7 +40,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
 /// Run proxy server only (no API server)
 async fn run_proxy_only(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
-    let proxy = Proxy::new(config);
+    let mut proxy = Proxy::new(config);
+
+    // Set custom concurrency limit if specified
+    if cli.max_concurrency > 0 {
+        proxy.set_max_concurrency(cli.max_concurrency);
+    }
 
     info!("Starting proxy server on {}", cli.addr);
 
@@ -87,6 +92,7 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
     // Spawn proxy server task with shared config
     let proxy_handle = tokio::spawn(run_proxy_server(
         cli.addr.clone(),
+        cli.max_concurrency,
         shared_config,
         shutdown_tx.subscribe(),
     ));
@@ -163,6 +169,7 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
 #[cfg(feature = "api")]
 async fn run_proxy_server(
     addr: String,
+    max_concurrency: usize,
     shared_config: Arc<RwLock<Config>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
@@ -172,7 +179,12 @@ async fn run_proxy_server(
 
     // Create initial proxy with current config
     let config = shared_config.read().await.clone();
-    let proxy = Proxy::new(config);
+    let mut proxy = Proxy::new(config);
+
+    // Set custom concurrency limit if specified
+    if max_concurrency > 0 {
+        proxy.set_max_concurrency(max_concurrency);
+    }
 
     // Run proxy server
     tokio::select! {
