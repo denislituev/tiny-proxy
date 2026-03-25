@@ -5,6 +5,12 @@ use tracing_subscriber::EnvFilter;
 use tiny_proxy::cli::Cli;
 use tiny_proxy::config::Config;
 
+#[cfg(feature = "cli")]
+use std::sync::Arc;
+
+#[cfg(feature = "cli")]
+use tokio::sync::{broadcast, RwLock};
+
 #[cfg(feature = "api")]
 use tiny_proxy::start_api_server;
 use tiny_proxy::Proxy;
@@ -57,7 +63,7 @@ async fn run_proxy_only(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
         result = proxy.start(&cli.addr) => {
             if let Err(e) = result {
                 error!("Proxy server error: {}", e);
-                Err(e.into())
+                Err(e)
             } else {
                 Ok(())
             }
@@ -189,7 +195,7 @@ async fn run_proxy_server(
     // Run proxy server
     tokio::select! {
         result = proxy.start(&addr) => {
-            result.map_err(|e| e.into())
+            result
         },
         _ = shutdown_rx.recv() => {
             info!("Proxy server received shutdown signal");

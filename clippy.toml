@@ -1,0 +1,48 @@
+# Clippy configuration file
+# More info: https://doc.rust-lang.org/clippy/configuration.html
+
+# Maximum allowed cognitive complexity for a function
+# Proxy request handling can be complex, but we want to keep it maintainable
+cognitive-complexity-threshold = 30
+
+# Maximum allowed lines for a function
+# Allow slightly longer functions for complex request routing logic
+too-many-lines-threshold = 120
+
+# Maximum allowed arguments for a function
+# Keep functions focused with limited arguments
+too-many-arguments-threshold = 7
+
+# Valid identifiers in documentation
+# Include HTTP, proxy, and networking-related terms
+doc-valid-idents = [
+    "HTTP",
+    "HTTPS",
+    "URL",
+    "URI",
+    "UUID",
+    "TCP",
+    "TLS",
+    "SSL",
+    "SSE",
+    "JSON",
+    "WebSocket",
+    "CLI",
+    "API",
+    "DNS",
+    "IPv4",
+    "IPv6",
+]
+
+# Avoid breaking the public API when fixing clippy warnings
+avoid-breaking-exported-api = true
+
+# Performance-critical settings for proxy server
+# Warn about expensive operations in hot paths
+warn-on-all-wildcard-imports = true
+
+# Disallow certain patterns that can hurt performance
+disallowed-methods = []
+
+# Enforce specific lints for high-performance code
+# These will be set to deny in the CI pipeline

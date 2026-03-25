@@ -161,7 +161,7 @@ pub async fn proxy(
             let boxed: ResponseBody = Full::new(Bytes::from(body))
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                 .boxed();
-            return Ok(Response::builder().status(status_code).body(boxed).unwrap());
+            Ok(Response::builder().status(status_code).body(boxed).unwrap())
         }
         ActionResult::ReverseProxy {
             backend_url,
@@ -337,8 +337,7 @@ fn error_response(status: StatusCode, message: &str) -> Response<ResponseBody> {
 /// Match path against pattern (supports wildcard *)
 /// Returns Some(remaining_path) if match, None otherwise
 pub fn match_pattern(pattern: &str, path: &str) -> Option<String> {
-    if pattern.ends_with("/*") {
-        let prefix = &pattern[..pattern.len() - 2];
+    if let Some(prefix) = pattern.strip_suffix("/*") {
         if path.starts_with(prefix) {
             // Remove prefix and return remaining path
             let remaining = path.strip_prefix(prefix).unwrap_or(path);
@@ -346,11 +345,9 @@ pub fn match_pattern(pattern: &str, path: &str) -> Option<String> {
         } else {
             None
         }
+    } else if pattern == path {
+        Some("/".to_string()) // Exact match, send root
     } else {
-        if pattern == path {
-            Some("/".to_string()) // Exact match, send root
-        } else {
-            None
-        }
+        None
     }
 }

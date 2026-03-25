@@ -20,6 +20,7 @@
 //! ```
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::str::FromStr;
 use tiny_proxy::config::{Config, Directive, SiteConfig};
 use tiny_proxy::proxy::handler::match_pattern;
 
