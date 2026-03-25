@@ -5,10 +5,6 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-concurrency:
-  group: pr-check-${{ github.ref }}
-  cancel-in-progress: true
-
 env:
   CARGO_TERM_COLOR: always
 
@@ -24,13 +20,13 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Cache
+      - name: Cache cargo and build
         uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Clippy
+      - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Quick build check
@@ -39,7 +35,7 @@ jobs:
       - name: Check documentation
         run: cargo doc --no-deps --all-features --document-private-items
 
-  security:
+  security-audit:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
@@ -48,7 +44,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache
+      - name: Cache cargo and build
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-audit
@@ -57,7 +53,7 @@ jobs:
       - name: Run cargo audit
         run: cargo audit
 
-  licenses:
+  license-check:
     name: License Check
     runs-on: ubuntu-latest
     steps:
@@ -66,7 +62,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache
+      - name: Cache cargo and build
         uses: Swatinem/rust-cache@v2
 
       - name: Install cargo-deny
