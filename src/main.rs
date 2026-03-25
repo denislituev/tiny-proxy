@@ -9,7 +9,7 @@ use tiny_proxy::config::Config;
 use std::sync::Arc;
 
 #[cfg(feature = "cli")]
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 
 #[cfg(feature = "api")]
 use tiny_proxy::start_api_server;

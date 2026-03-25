@@ -1,9 +1,9 @@
 //! Middleware for API requests
 
-use hyper::{Request, Response, StatusCode};
+use bytes::Bytes;
 use http_body::Body;
 use http_body_util::Full;
-use bytes::Bytes;
+use hyper::{Request, Response, StatusCode};
 
 /// API authentication middleware
 pub async fn auth_middleware<B>(
@@ -54,8 +54,8 @@ pub fn logging_middleware<B: Body>(req: Request<B>) -> Request<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::Request;
     use http_body_util::Empty;
+    use hyper::Request;
 
     #[tokio::test]
     async fn test_auth_middleware_valid_key() {
@@ -83,9 +83,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_auth_middleware_missing_key() {
-        let req: Request<Empty<Bytes>> = Request::builder()
-            .body(Empty::new())
-            .unwrap();
+        let req: Request<Empty<Bytes>> = Request::builder().body(Empty::new()).unwrap();
 
         let api_key = "secret-key-123";
         let result = auth_middleware(req, api_key).await;
