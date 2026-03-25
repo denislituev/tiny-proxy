@@ -1,5 +1,12 @@
 # Tiny Proxy
 
+[![CI](https://github.com/denislituev/tiny-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/denislituev/tiny-proxy/actions)
+[![Version](https://img.shields.io/crates/v/tiny-proxy)](https://crates.io/crates/tiny-proxy)
+[![Downloads](https://img.shields.io/crates/d/tiny-proxy)](https://crates.io/crates/tiny-proxy)
+
+[![License](https://img.shields.io/crates/l/tiny-proxy)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange)](https://www.rust-lang.org/)
+
 Lightweight, embeddable HTTP reverse proxy written in Rust with Caddy-like configuration syntax.
 
 ## Features
@@ -278,6 +285,7 @@ Use placeholders in header values:
 ### Default Features
 
 - `cli` - Command-line interface support (enabled by default)
+- `tls` - HTTPS backend support (enabled by default)
 
 ### Optional Features
 
@@ -286,7 +294,7 @@ Use placeholders in header values:
 tiny-proxy = { version = "0.1", features = ["full"] }
 
 # Or select specific features
-tiny-proxy = { version = "0.1", features = ["cli", "auth", "api"] }
+tiny-proxy = { version = "0.1", features = ["cli", "tls", "api"] }
 ```
 
 #### `cli` (default)
@@ -306,6 +314,10 @@ let is_valid = auth::validate_token(&req, "http://auth-service/validate").await?
 // Process header substitutions
 let value = auth::process_header_substitution("Bearer {header.Authorization}", &req)?;
 ```
+
+#### `tls` (default)
+
+Enable HTTPS backend support using `hyper-tls`.
 
 #### `api`
 
@@ -401,7 +413,6 @@ tiny-proxy/
 ├── examples/                # Usage examples
 ├── tests/                   # Integration tests
 ├── benches/                 # Benchmarks
-└── ex/                      # Architecture and roadmap docs
 ```
 
 ### Build with Features
@@ -435,7 +446,7 @@ cargo run --example hot_reload --features auth
 
 ## Roadmap
 
-See [ex/roadmap.md](ex/roadmap.md) for detailed roadmap.
+
 
 ### Current Status
 
@@ -478,20 +489,3 @@ Contributions are welcome! Please:
 
 See [LICENSE](LICENSE) file.
 
-## Architecture
-
-For detailed architecture documentation, see [ex/ARCHITECTURE.md](ex/ARCHITECTURE.md).
-
-## Related Projects
-
-- [Caddy](https://caddyserver.com/) - Inspiration for configuration format
-- [hyper](https://hyper.rs/) - HTTP library used
-- [tokio](https://tokio.rs/) - Async runtime
-
-## Support
-
-For issues and questions:
-
-- Open an issue on GitHub
-- Check [ex/roadmap.md](ex/roadmap.md) for known issues
-- See [examples/](examples/) for usage patterns

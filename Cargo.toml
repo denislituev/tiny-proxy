@@ -2,6 +2,37 @@
 name = "tiny-proxy"
 version = "0.1.0"
 edition = "2021"
+description = "A high-performance HTTP reverse proxy server written in Rust with SSE support, connection pooling, and configurable routing"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/denislituev/tiny-proxy"
+readme = "README.md"
+homepage = "https://github.com/denislituev/tiny-proxy"
+documentation = "https://docs.rs/tiny-proxy"
+categories = [
+    "network-programming",
+    "web-programming::http-server",
+    "web-programming::http-client",
+    "asynchronous",
+    "command-line-utilities",
+]
+include = [
+    "src/**",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE*",
+]
+keywords = [
+    "proxy",
+    "reverse-proxy",
+    "http",
+    "server-sent-events",
+    "sse",
+    "high-performance",
+    "tokio",
+    "hyper",
+]
+authors = ["Dzianis Lituyeu"]
+rust-version = "1.75"
 
 [lib]
 name = "tiny_proxy"
@@ -10,12 +41,13 @@ path = "src/lib.rs"
 [[bin]]
 name = "tiny-proxy"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [dependencies]
-hyper = { version = "1.3", features = ["full"] }
-hyper-util = { version = "0.1", features = ["full"] }
+hyper = { version = "1.3", features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", features = ["client", "server", "http1", "tokio"] }
 http-body-util = "0.1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 anyhow = "1.0"
 thiserror = "2.0.18"
 bytes = "1.0"
@@ -23,21 +55,36 @@ num_cpus = "1.16"
 
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
-hyper-tls = "0.6"
+hyper-tls = { version = "0.6", optional = true }
 tracing = "0.1"
 clap = { version = "4.5", features = ["derive"], optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion = { version = "0.5.1", default-features = false }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
+debug = true
 
 [[bench]]
 name = "proxy_bench"
 harness = false
 
 [features]
-default = ["cli"]
+default = ["cli", "tls"]
 cli = ["dep:clap", "dep:tracing-subscriber"]
-
+tls = ["dep:hyper-tls"]
 api = ["dep:serde", "dep:serde_json"]
-full = ["cli", "api"]
+full = ["cli", "tls", "api"]
