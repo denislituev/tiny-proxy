@@ -1,5 +1,6 @@
 mod directives;
 pub mod handler;
+#[allow(clippy::module_inception)]
 mod proxy;
 mod types;
 

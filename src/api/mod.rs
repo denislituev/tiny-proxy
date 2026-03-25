@@ -14,10 +14,9 @@
 //! # #[tokio::main]
 //! # async fn main() -> anyhow::Result<()> {
 //! let config = Arc::new(RwLock::new(Config::from_file("config.caddy")?));
-//! let addr = "127.0.0.1:8081".parse()?;
 //!
 //! // Start the management API server
-//! api::start_api_server(addr, config).await?;
+//! api::start_api_server("127.0.0.1:8081", config).await?;
 //! # Ok(())
 //! # }
 //! ```

@@ -63,7 +63,7 @@ async fn run_proxy_only(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
         result = proxy.start(&cli.addr) => {
             if let Err(e) = result {
                 error!("Proxy server error: {}", e);
-                Err(e.into())
+                Err(e)
             } else {
                 Ok(())
             }
@@ -195,7 +195,7 @@ async fn run_proxy_server(
     // Run proxy server
     tokio::select! {
         result = proxy.start(&addr) => {
-            result.map_err(|e| e.into())
+            result
         },
         _ = shutdown_rx.recv() => {
             info!("Proxy server received shutdown signal");

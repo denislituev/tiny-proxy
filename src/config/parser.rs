@@ -1,6 +1,7 @@
 use crate::config::{Config, Directive, SiteConfig};
 use crate::error::ProxyError;
 use std::collections::HashMap;
+use std::str::FromStr;
 
 #[derive(Debug)]
 struct PendingBlock {
@@ -11,10 +12,14 @@ struct PendingBlock {
 impl Config {
     pub fn from_file(path: &str) -> Result<Self, ProxyError> {
         let content = std::fs::read_to_string(path)?;
-        Self::from_str(&content)
+        content.parse()
     }
+}
 
-    pub fn from_str(content: &str) -> Result<Self, ProxyError> {
+impl FromStr for Config {
+    type Err = ProxyError;
+
+    fn from_str(content: &str) -> Result<Self, Self::Err> {
         let mut sites = HashMap::new();
         let mut current_site_address: Option<String> = None;
 
@@ -64,7 +69,7 @@ impl Config {
 
                     let completed_directive = match block_info.directive_type.as_str() {
                         "handle_path" => {
-                            let pattern = block_info.args.get(0).cloned().unwrap_or_default();
+                            let pattern = block_info.args.first().cloned().unwrap_or_default();
                             Directive::HandlePath {
                                 pattern,
                                 directives: finished_directives,
@@ -115,13 +120,13 @@ impl Config {
 
             let directive = match directive_name {
                 "reverse_proxy" => {
-                    let to = args.get(0).cloned().ok_or_else(|| {
+                    let to = args.first().cloned().ok_or_else(|| {
                         ProxyError::Parse("Missing backend URL for reverse_proxy".to_string())
                     })?;
                     Directive::ReverseProxy { to: to.to_string() }
                 }
                 "uri_replace" => {
-                    let find = args.get(0).cloned().ok_or_else(|| {
+                    let find = args.first().cloned().ok_or_else(|| {
                         ProxyError::Parse("Missing 'find' arg for uri_replace".to_string())
                     })?;
                     let replace = args.get(1).cloned().ok_or_else(|| {
@@ -133,7 +138,7 @@ impl Config {
                     }
                 }
                 "header" => {
-                    let name = args.get(0).cloned().ok_or_else(|| {
+                    let name = args.first().cloned().ok_or_else(|| {
                         ProxyError::Parse("Missing 'name' arg for header".to_string())
                     })?;
                     let value = args.get(1).cloned().ok_or_else(|| {
@@ -145,7 +150,7 @@ impl Config {
                     }
                 }
                 "respond" => {
-                    let status = args.get(0).and_then(|s| s.parse().ok()).ok_or_else(|| {
+                    let status = args.first().and_then(|s| s.parse().ok()).ok_or_else(|| {
                         ProxyError::Parse("Invalid status for respond".to_string())
                     })?;
                     let body = args.get(1).cloned().unwrap_or_default();
