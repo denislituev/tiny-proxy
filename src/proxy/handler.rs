@@ -4,7 +4,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header;
 use hyper::{Request, Response, StatusCode, Uri};
-use hyper_tls::HttpsConnector;
+use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use std::sync::Arc;

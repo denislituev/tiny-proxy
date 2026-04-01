@@ -313,7 +313,7 @@ Enable CLI dependencies and `tiny-proxy` binary.
 
 #### `tls` (default)
 
-Enable HTTPS backend support using `hyper-tls`.
+Enable HTTPS backend support using `hyper-rustls` (pure Rust TLS).
 
 #### `api` (default)
 
