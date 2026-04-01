@@ -19,6 +19,9 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-C strip=symbols"
 
+permissions:
+  contents: write
+
 jobs:
   release-build:
     name: Build Release Binaries
