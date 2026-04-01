@@ -5,10 +5,10 @@ use tracing_subscriber::EnvFilter;
 use tiny_proxy::cli::Cli;
 use tiny_proxy::config::Config;
 
-#[cfg(feature = "cli")]
+#[cfg(feature = "api")]
 use std::sync::Arc;
 
-#[cfg(feature = "cli")]
+#[cfg(feature = "api")]
 use tokio::sync::{broadcast, RwLock};
 
 #[cfg(feature = "api")]

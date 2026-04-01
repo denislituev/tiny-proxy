@@ -184,7 +184,7 @@ Add or modify request headers.
 
 ```caddy
 localhost:8080 {
-    header X-Forwarded-For {remote_host}
+    header X-Request-ID {uuid}
     header X-Custom-Header custom-value
     reverse_proxy backend:3000
 }
@@ -253,7 +253,7 @@ localhost:8080 {
 
 ```caddy
 localhost:8080 {
-    header X-Forwarded-For {remote_host}
+    header X-Forwarded-For {header.X-Forwarded-For}
     header X-Request-ID {uuid}
     uri_replace /api /backend
     reverse_proxy http://backend:3000
@@ -278,62 +278,55 @@ Use placeholders in header values:
 - `{header.Name}` - Value of request header with that name
 - `{env.VAR}` - Value of environment variable
 - `{uuid}` - Random UUID
-- `{remote_host}` - Remote host (requires `auth` feature)
 
 ## Features
 
 ### Default Features
 
-- `cli` - Command-line interface support (enabled by default)
-- `tls` - HTTPS backend support (enabled by default)
+- `cli` - Command-line interface support
+- `tls` - HTTPS backend support
+- `api` - Management API for runtime configuration
 
 ### Optional Features
 
 ```toml
+# Minimal - core proxy only (for embedding in other applications)
 [dependencies]
-tiny-proxy = { version = "0.1", features = ["full"] }
+tiny-proxy = { version = "0.1", default-features = false }
 
-# Or select specific features
-tiny-proxy = { version = "0.1", features = ["cli", "tls", "api"] }
+# With HTTPS backend support
+[dependencies]
+tiny-proxy = { version = "0.1", default-features = false, features = ["tls"] }
+
+# With management API
+[dependencies]
+tiny-proxy = { version = "0.1", default-features = false, features = ["tls", "api"] }
+
+# Full standalone (same as default)
+[dependencies]
+tiny-proxy = { version = "0.1" }
 ```
 
 #### `cli` (default)
 
 Enable CLI dependencies and `tiny-proxy` binary.
 
-#### `auth`
-
-Authentication and authorization support:
-
-```rust
-use tiny_proxy::auth;
-
-// Validate token
-let is_valid = auth::validate_token(&req, "http://auth-service/validate").await?;
-
-// Process header substitutions
-let value = auth::process_header_substitution("Bearer {header.Authorization}", &req)?;
-```
-
 #### `tls` (default)
 
 Enable HTTPS backend support using `hyper-tls`.
 
-#### `api`
+#### `api` (default)
 
 Management API for runtime configuration:
 
 ```rust
 use tiny_proxy::api;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 let config = Arc::new(RwLock::new(Config::from_file("config.caddy")?));
 api::start_api_server("127.0.0.1:8081", config).await?;
 ```
-
-#### `full`
-
-Enable all features (`cli`, `auth`, `api`).
 
 ## API Documentation
 
@@ -418,17 +411,20 @@ tiny-proxy/
 ### Build with Features
 
 ```bash
-# CLI only (default)
+# Default (CLI + TLS + API)
 cargo build
 
 # Library only (no CLI dependencies)
 cargo build --no-default-features
 
-# Full features
-cargo build --features full
+# Library with HTTPS support
+cargo build --no-default-features --features tls
 
-# Specific features
-cargo build --features auth,api
+# Library with API for config management
+cargo build --no-default-features --features tls,api
+
+# CLI without API
+cargo build --no-default-features --features cli,tls
 ```
 
 ### Run Examples
@@ -439,9 +435,6 @@ cargo run --example basic
 
 # Background execution
 cargo run --example background
-
-# Hot-reload (with auth feature)
-cargo run --example hot_reload --features auth
 ```
 
 ## Roadmap
