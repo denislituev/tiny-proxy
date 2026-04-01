@@ -19,7 +19,7 @@ Lightweight, embeddable HTTP reverse proxy written in Rust with Caddy-like confi
 - **HTTP/HTTPS Backend Support**: Full support for both HTTP and HTTPS backends
 - **Method-based Routing**: Different behavior for different HTTP methods
 - **Direct Responses**: Respond with custom status codes and bodies
-- **Authentication Module**: Token validation and header substitution (optional feature)
+- **Authentication Module**: Token validation and header substitution
 - **Management API**: REST API for runtime configuration management (optional feature)
 
 ## Installation
