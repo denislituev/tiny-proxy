@@ -21,16 +21,7 @@ include = [
     "README.md",
     "LICENSE*",
 ]
-keywords = [
-    "proxy",
-    "reverse-proxy",
-    "http",
-    "server-sent-events",
-    "sse",
-    "high-performance",
-    "tokio",
-    "hyper",
-]
+keywords = ["proxy", "reverse-proxy", "http", "sse", "high-performance"]
 authors = ["Dzianis Lituyeu"]
 rust-version = "1.75"
 
