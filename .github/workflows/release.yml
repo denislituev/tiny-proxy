@@ -37,7 +37,7 @@ jobs:
             artifact: tiny-proxy-linux-arm64
             use-cross: true
 
-          - os: macos-13
+          - os: macos-15
             target: x86_64-apple-darwin
             artifact: tiny-proxy-macos-amd64
             use-cross: false
