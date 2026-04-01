@@ -1,6 +1,6 @@
 use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper_tls::HttpsConnector;
+use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
@@ -54,7 +54,12 @@ impl Proxy {
         let mut http = HttpConnector::new();
         http.set_keepalive(Some(Duration::from_secs(60)));
         http.set_nodelay(true);
-        let https = HttpsConnector::new_with_connector(http);
+        let https = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .unwrap()
+            .https_or_http()
+            .enable_http1()
+            .wrap_connector(http);
 
         let client = Client::builder(TokioExecutor::new())
             .pool_max_idle_per_host(100)

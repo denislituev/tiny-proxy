@@ -55,7 +55,7 @@ num_cpus = "1.16"
 
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
-hyper-tls = { version = "0.6", optional = true }
+hyper-rustls = { version = "0.27", optional = true }
 tracing = "0.1"
 clap = { version = "4.5", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
@@ -86,5 +86,5 @@ harness = false
 [features]
 default = ["cli", "tls", "api"]
 cli = ["dep:clap", "dep:tracing-subscriber"]
-tls = ["dep:hyper-tls"]
+tls = ["dep:hyper-rustls"]
 api = ["dep:serde", "dep:serde_json"]
