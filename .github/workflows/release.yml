@@ -89,7 +89,11 @@ jobs:
           cp "$BIN_PATH" dist/${{ matrix.artifact }}
 
           cd dist
-          shasum -a 256 ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            powershell -Command "(Get-FileHash -Path '${{ matrix.artifact }}' -Algorithm SHA256).Hash.ToLower() + '  ${{ matrix.artifact }}'" > ${{ matrix.artifact }}.sha256
+          else
+            shasum -a 256 ${{ matrix.artifact }} > ${{ matrix.artifact }}.sha256
+          fi
         shell: bash
 
       - name: Upload artifact
