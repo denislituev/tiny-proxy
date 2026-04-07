@@ -4,7 +4,7 @@
 //! against external authentication services.
 
 use hyper::body::Incoming;
-use hyper::{Request, StatusCode};
+use hyper::Request;
 
 /// Validate an authentication token from a request
 ///
@@ -100,13 +100,13 @@ pub async fn validate_token_with_header(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+    use http_body_util::Empty;
     use hyper::Request;
 
     #[test]
     fn test_validate_token_missing_header() {
-        let req = Request::builder()
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = Request::builder().body(Empty::<Bytes>::new()).unwrap();
 
         // This would fail in a real async test, but we're just testing the logic
         let validator_url = "http://auth-service:8080/validate";
@@ -119,7 +119,7 @@ mod tests {
     fn test_validate_token_with_custom_header() {
         let req = Request::builder()
             .header("X-Auth-Token", "test-token-123")
-            .body(hyper::body::Incoming::empty())
+            .body(Empty::<Bytes>::new())
             .unwrap();
 
         let validator_url = "http://auth-service:8080/validate";
