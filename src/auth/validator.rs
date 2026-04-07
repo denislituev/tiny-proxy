@@ -3,7 +3,6 @@
 //! This module provides functionality for validating tokens
 //! against external authentication services.
 
-use hyper::body::Incoming;
 use hyper::Request;
 
 /// Validate an authentication token from a request
@@ -27,15 +26,17 @@ use hyper::Request;
 /// ```no_run
 /// use tiny_proxy::auth::validator::validate_token;
 /// use hyper::Request;
+/// use bytes::Bytes;
+/// use http_body_util::Empty;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
-/// # let req = Request::builder().body(hyper::body::Incoming::empty()).unwrap();
+/// # let req = Request::builder().body(Empty::<Bytes>::new()).unwrap();
 /// let is_valid = validate_token(&req, "http://auth-service:8080/validate").await?;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn validate_token(req: &Request<Incoming>, validator_url: &str) -> anyhow::Result<bool> {
+pub async fn validate_token<B>(req: &Request<B>, validator_url: &str) -> anyhow::Result<bool> {
     // Extract token from Authorization header
     let auth_header = req
         .headers()
@@ -74,8 +75,8 @@ pub async fn validate_token(req: &Request<Incoming>, validator_url: &str) -> any
 /// * `Ok(true)` - Token is valid
 /// * `Ok(false)` - Token is invalid
 /// * `Err(...)` - Error occurred during validation
-pub async fn validate_token_with_header(
-    req: &Request<Incoming>,
+pub async fn validate_token_with_header<B>(
+    req: &Request<B>,
     validator_url: &str,
     header_name: &str,
 ) -> anyhow::Result<bool> {
@@ -99,17 +100,16 @@ pub async fn validate_token_with_header(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use bytes::Bytes;
     use http_body_util::Empty;
     use hyper::Request;
 
     #[test]
     fn test_validate_token_missing_header() {
-        let req = Request::builder().body(Empty::<Bytes>::new()).unwrap();
+        let _req = Request::builder().body(Empty::<Bytes>::new()).unwrap();
 
         // This would fail in a real async test, but we're just testing the logic
-        let validator_url = "http://auth-service:8080/validate";
+        let _validator_url = "http://auth-service:8080/validate";
 
         // Note: This test demonstrates the function signature
         // In a real test, you'd use a tokio::test and mock the HTTP client
@@ -117,13 +117,13 @@ mod tests {
 
     #[test]
     fn test_validate_token_with_custom_header() {
-        let req = Request::builder()
+        let _req = Request::builder()
             .header("X-Auth-Token", "test-token-123")
             .body(Empty::<Bytes>::new())
             .unwrap();
 
-        let validator_url = "http://auth-service:8080/validate";
-        let header_name = "X-Auth-Token";
+        let _validator_url = "http://auth-service:8080/validate";
+        let _header_name = "X-Auth-Token";
 
         // Note: This test demonstrates the function signature
         // In a real test, you'd use a tokio::test and mock the HTTP client

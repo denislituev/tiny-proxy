@@ -24,10 +24,12 @@ use hyper::Request;
 /// # Example
 ///
 /// ```no_run
-/// # use hyper::{Request, body::Incoming};
+/// # use hyper::Request;
+/// # use bytes::Bytes;
+/// # use http_body_util::Empty;
 /// # use tiny_proxy::auth::headers::process_header_substitution;
 /// # fn main() -> anyhow::Result<()> {
-/// # let req = Request::builder().body(hyper::body::Incoming::empty()).unwrap();
+/// # let req = Request::builder().body(Empty::<Bytes>::new()).unwrap();
 /// let result = process_header_substitution("X-Request-ID: {uuid}", &req)?;
 /// assert!(result.contains("X-Request-ID:"));
 /// # Ok(())
