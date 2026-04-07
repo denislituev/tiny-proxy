@@ -76,6 +76,7 @@
 //!
 //! For more configuration options, see the [config] module documentation.
 
+pub mod auth;
 #[cfg(feature = "cli")]
 pub mod cli;
 pub mod config;

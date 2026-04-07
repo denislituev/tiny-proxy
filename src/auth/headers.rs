@@ -3,7 +3,7 @@
 //! This module provides utilities for processing header value substitutions
 //! including request headers, UUIDs, and environment variables.
 
-use hyper::{body::Incoming, Request};
+use hyper::Request;
 
 /// Process header value substitutions
 ///
@@ -24,16 +24,18 @@ use hyper::{body::Incoming, Request};
 /// # Example
 ///
 /// ```no_run
-/// # use hyper::{Request, body::Incoming};
+/// # use hyper::Request;
+/// # use bytes::Bytes;
+/// # use http_body_util::Empty;
 /// # use tiny_proxy::auth::headers::process_header_substitution;
 /// # fn main() -> anyhow::Result<()> {
-/// # let req = Request::builder().body(hyper::body::Incoming::empty()).unwrap();
+/// # let req = Request::builder().body(Empty::<Bytes>::new()).unwrap();
 /// let result = process_header_substitution("X-Request-ID: {uuid}", &req)?;
 /// assert!(result.contains("X-Request-ID:"));
 /// # Ok(())
 /// # }
 /// ```
-pub fn process_header_substitution(value: &str, req: &Request<Incoming>) -> anyhow::Result<String> {
+pub fn process_header_substitution<B>(value: &str, req: &Request<B>) -> anyhow::Result<String> {
     let mut result = value.to_string();
 
     // Process {header.Name} substitutions
@@ -90,7 +92,7 @@ pub fn process_header_substitution(value: &str, req: &Request<Incoming>) -> anyh
 /// # Returns
 ///
 /// The remote IP address if found, None otherwise
-pub fn extract_remote_ip(req: &Request<Incoming>) -> Option<String> {
+pub fn extract_remote_ip<B>(req: &Request<B>) -> Option<String> {
     // Check X-Forwarded-For header (set by proxies)
     if let Some(xff) = req.headers().get("X-Forwarded-For") {
         if let Ok(xff_str) = xff.to_str() {
@@ -113,14 +115,24 @@ pub fn extract_remote_ip(req: &Request<Incoming>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::{body::Incoming, Request};
+    use bytes::Bytes;
+    use http_body_util::Empty;
+    use hyper::Request;
+
+    fn make_request() -> Request<Empty<Bytes>> {
+        Request::builder().body(Empty::new()).unwrap()
+    }
+
+    fn make_request_with_header(name: &str, value: &str) -> Request<Empty<Bytes>> {
+        Request::builder()
+            .header(name, value)
+            .body(Empty::new())
+            .unwrap()
+    }
 
     #[test]
     fn test_process_header_substitution_header() {
-        let mut req = Request::builder()
-            .header("X-User-ID", "12345")
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = make_request_with_header("X-User-ID", "12345");
 
         let result = process_header_substitution("User: {header.X-User-ID}", &req).unwrap();
         assert_eq!(result, "User: 12345");
@@ -129,9 +141,7 @@ mod tests {
     #[test]
     fn test_process_header_substitution_env() {
         std::env::set_var("TEST_VAR", "test-value");
-        let req = Request::builder()
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = make_request();
 
         let result = process_header_substitution("Value: {env.TEST_VAR}", &req).unwrap();
         assert_eq!(result, "Value: test-value");
@@ -140,9 +150,7 @@ mod tests {
 
     #[test]
     fn test_process_header_substitution_uuid() {
-        let req = Request::builder()
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = make_request();
 
         let result = process_header_substitution("ID: {uuid}", &req).unwrap();
         assert!(result.starts_with("ID: "));
@@ -151,9 +159,7 @@ mod tests {
 
     #[test]
     fn test_process_header_substitution_missing_header() {
-        let req = Request::builder()
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = make_request();
 
         let result = process_header_substitution("Value: {header.Missing}", &req).unwrap();
         assert_eq!(result, "Value: ");
@@ -161,10 +167,7 @@ mod tests {
 
     #[test]
     fn test_extract_remote_ip_xff() {
-        let req = Request::builder()
-            .header("X-Forwarded-For", "192.168.1.1, 10.0.0.1")
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = make_request_with_header("X-Forwarded-For", "192.168.1.1, 10.0.0.1");
 
         let ip = extract_remote_ip(&req);
         assert_eq!(ip, Some("192.168.1.1".to_string()));
@@ -172,10 +175,7 @@ mod tests {
 
     #[test]
     fn test_extract_remote_ip_xri() {
-        let req = Request::builder()
-            .header("X-Real-IP", "192.168.1.2")
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = make_request_with_header("X-Real-IP", "192.168.1.2");
 
         let ip = extract_remote_ip(&req);
         assert_eq!(ip, Some("192.168.1.2".to_string()));
@@ -183,9 +183,7 @@ mod tests {
 
     #[test]
     fn test_extract_remote_ip_none() {
-        let req = Request::builder()
-            .body(hyper::body::Incoming::empty())
-            .unwrap();
+        let req = make_request();
 
         let ip = extract_remote_ip(&req);
         assert!(ip.is_none());
