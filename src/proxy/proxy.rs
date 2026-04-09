@@ -152,7 +152,7 @@ impl Proxy {
         );
 
         loop {
-            let (stream, _) = listener.accept().await?;
+            let (stream, remote_addr) = listener.accept().await?;
             let io = TokioIo::new(stream);
             let client = self.client.clone();
             let config = Arc::new(self.config.clone());
@@ -165,7 +165,7 @@ impl Proxy {
                         let service = service_fn(move |req| {
                             let client = client.clone();
                             let config = config.clone();
-                            proxy(req, client, config)
+                            proxy(req, client, config, remote_addr)
                         });
 
                         let mut builder = hyper::server::conn::http1::Builder::new();
