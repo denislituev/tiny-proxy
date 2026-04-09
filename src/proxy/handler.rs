@@ -121,6 +121,7 @@ pub async fn proxy(
     mut req: Request<Incoming>,
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
     config: Arc<Config>,
+    remote_addr: std::net::SocketAddr,
 ) -> Result<Response<ResponseBody>, Error> {
     // Get path from URI (using String to avoid borrow conflict with mutable req)
     let path = req.uri().path().to_string();
@@ -225,11 +226,11 @@ pub async fn proxy(
                 _ => {} // ignore unknown schemes
             }
 
-            // X-Forwarded-For: client IP address
-            // TODO: Extract real client IP from connection info
-            // For now, we can use the original host as a placeholder
-            if let Some(for_value) = original_host_header {
-                req.headers_mut().insert("X-Forwarded-For", for_value);
+            // X-Forwarded-For: real client IP from TCP connection
+            if let Ok(ip_value) =
+                hyper::header::HeaderValue::from_str(&remote_addr.ip().to_string())
+            {
+                req.headers_mut().insert("X-Forwarded-For", ip_value);
             }
 
             // Remove hop-by-hop headers from request before sending to backend
