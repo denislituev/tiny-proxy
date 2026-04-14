@@ -41,7 +41,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tiny-proxy = "0.1"
+tiny-proxy = "0.2"
 ```
 
 ## Usage
@@ -106,26 +106,48 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-#### Configuration Management
+#### Hot-Reload Configuration
 
-Update configuration at runtime:
+Update configuration at runtime without restart. The proxy uses `Arc<RwLock<Config>>` internally,
+so any config change takes effect immediately for new connections:
 
 ```rust
 use tiny_proxy::{Config, Proxy};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::from_file("config.caddy")?;
-    let mut proxy = Proxy::new(config);
-    
-    proxy.start("127.0.0.1:8080").await?;
+    let proxy = Proxy::new(config);
 
-    // Later, update configuration
+    // Get shared config handle for hot-reload
+    let config_handle = proxy.shared_config();
+
+    // Spawn proxy in background
+    let handle = tokio::spawn(async move {
+        if let Err(e) = proxy.start("127.0.0.1:8080").await {
+            eprintln!("Proxy error: {}", e);
+        }
+    });
+
+    // Update config at runtime — takes effect immediately
     let new_config = Config::from_file("new-config.caddy")?;
-    proxy.update_config(new_config);
-    
+    {
+        let mut guard = config_handle.write().await;
+        *guard = new_config;
+    }
+
+    handle.await?;
     Ok(())
 }
+```
+
+Or use the built-in `update_config` method:
+
+```rust
+let new_config = Config::from_file("updated-config.caddy")?;
+proxy.update_config(new_config).await;
 ```
 
 ## Configuration
@@ -292,19 +314,19 @@ Use placeholders in header values:
 ```toml
 # Minimal - core proxy only (for embedding in other applications)
 [dependencies]
-tiny-proxy = { version = "0.1", default-features = false }
+tiny-proxy = { version = "0.2", default-features = false }
 
 # With HTTPS backend support
 [dependencies]
-tiny-proxy = { version = "0.1", default-features = false, features = ["tls"] }
+tiny-proxy = { version = "0.2", default-features = false, features = ["tls"] }
 
 # With management API
 [dependencies]
-tiny-proxy = { version = "0.1", default-features = false, features = ["tls", "api"] }
+tiny-proxy = { version = "0.2", default-features = false, features = ["tls", "api"] }
 
 # Full standalone (same as default)
 [dependencies]
-tiny-proxy = { version = "0.1" }
+tiny-proxy = "0.2"
 ```
 
 #### `cli` (default)
@@ -344,9 +366,11 @@ See the [module documentation](https://docs.rs/tiny-proxy) for detailed API refe
 - `Config::from_file(path)` - Load configuration from file
 - `Config::from_str(content)` - Parse configuration from string
 - `Proxy::new(config)` - Create proxy instance
+- `Proxy::from_shared(config)` - Create proxy from shared `Arc<RwLock<Config>>`
 - `Proxy::start(addr)` - Start proxy server
-- `Proxy::config()` - Get current configuration
-- `Proxy::update_config(config)` - Update configuration
+- `Proxy::shared_config()` - Get `Arc<RwLock<Config>>` for external config updates
+- `Proxy::config_snapshot()` - Read current configuration as owned value
+- `Proxy::update_config(config)` - Update configuration at runtime (async)
 
 ## Testing
 
@@ -356,15 +380,9 @@ Run all tests:
 cargo test
 ```
 
-Run specific test types:
+Run specific tests:
 
 ```bash
-# Unit tests only
-cargo test --lib
-
-# Integration tests only
-cargo test --tests
-
 # Specific test
 cargo test test_pattern_matching
 ```
@@ -404,7 +422,6 @@ tiny-proxy/
 │   ├── auth/                # Authentication (optional)
 │   └── api/                 # Management API (optional)
 ├── examples/                # Usage examples
-├── tests/                   # Integration tests
 ├── benches/                 # Benchmarks
 ```
 
@@ -453,7 +470,7 @@ cargo run --example background
 - ✅ Method-based routing
 - ✅ Direct responses
 - ✅ Authentication module (basic)
-- ✅ Management API (basic)
+- ✅ Management API with hot-reload
 
 ### Planned Features
 
