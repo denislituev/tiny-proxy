@@ -6,7 +6,7 @@ use http_body::Body;
 use http_body_util::{BodyExt, Full};
 use hyper::{Request, Response};
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::config::Config;
 
@@ -35,9 +35,29 @@ where
 }
 
 /// Handle POST /config
+///
+/// Accepts a JSON body representing the new configuration and atomically
+/// replaces the current configuration. The new config takes effect
+/// immediately for all new incoming proxy connections.
+///
+/// # Request Body
+///
+/// JSON representation of the full `Config` struct, e.g.:
+/// ```json
+/// {
+///   "sites": {
+///     "localhost:8080": {
+///       "address": "localhost:8080",
+///       "directives": [
+///         { "ReverseProxy": { "to": "localhost:9001" } }
+///       ]
+///     }
+///   }
+/// }
+/// ```
 pub async fn handle_post_config<B>(
     req: Request<B>,
-    _config: Arc<tokio::sync::RwLock<Config>>,
+    config: Arc<tokio::sync::RwLock<Config>>,
 ) -> Result<Response<Full<Bytes>>>
 where
     B: Body,
@@ -46,12 +66,16 @@ where
     let body_bytes = match BodyExt::collect(req.into_body()).await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
+            let error_json = serde_json::json!({
+                "status": "error",
+                "message": format!("Failed to read request body: {}", e)
+            });
             let response = Response::builder()
                 .status(400)
-                .body(Full::new(Bytes::from(format!(
-                    "Failed to read request body: {}",
-                    e
-                ))))
+                .header("Content-Type", "application/json")
+                .body(Full::new(Bytes::from(
+                    serde_json::to_string(&error_json).unwrap(),
+                )))
                 .unwrap();
             return Ok(response);
         }
@@ -60,18 +84,51 @@ where
     let body_str = match std::str::from_utf8(&body_bytes) {
         Ok(s) => s,
         Err(_) => {
+            let error_json = serde_json::json!({
+                "status": "error",
+                "message": "Invalid UTF-8 in request body"
+            });
             let response = Response::builder()
                 .status(400)
+                .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(
-                    "Invalid UTF-8 in request body".to_string(),
+                    serde_json::to_string(&error_json).unwrap(),
                 )))
                 .unwrap();
             return Ok(response);
         }
     };
 
-    info!("POST /config - Updating configuration");
-    info!("New config: {}", body_str);
+    // Parse JSON body into Config
+    let new_config: Config = match serde_json::from_str(body_str) {
+        Ok(config) => config,
+        Err(e) => {
+            error!("Failed to parse config JSON: {}", e);
+            let error_json = serde_json::json!({
+                "status": "error",
+                "message": format!("Invalid configuration JSON: {}", e)
+            });
+            let response = Response::builder()
+                .status(400)
+                .header("Content-Type", "application/json")
+                .body(Full::new(Bytes::from(
+                    serde_json::to_string(&error_json).unwrap(),
+                )))
+                .unwrap();
+            return Ok(response);
+        }
+    };
+
+    // Atomically replace the configuration
+    {
+        let mut guard = config.write().await;
+        let sites_count = new_config.sites.len();
+        *guard = new_config;
+        info!(
+            "POST /config - Configuration updated successfully ({} sites)",
+            sites_count
+        );
+    }
 
     let response = Response::builder()
         .status(200)
@@ -136,14 +193,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handle_post_config() {
+    async fn test_handle_post_config_valid_json() {
         let config = Arc::new(tokio::sync::RwLock::new(Config {
             sites: HashMap::new(),
         }));
 
-        let req: Request<Empty<Bytes>> = Request::builder().body(Empty::new()).unwrap();
+        let new_config_json = r#"{
+            "sites": {
+                "localhost:8080": {
+                    "address": "localhost:8080",
+                    "directives": [
+                        {"ReverseProxy": {"to": "localhost:9001"}}
+                    ]
+                }
+            }
+        }"#;
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/config")
+            .body(Full::new(Bytes::from(new_config_json.to_string())))
+            .unwrap();
+
+        let response = handle_post_config(req, config.clone()).await.unwrap();
+        assert_eq!(response.status(), 200);
+
+        // Verify config was actually updated
+        let guard = config.read().await;
+        assert_eq!(guard.sites.len(), 1);
+        assert!(guard.sites.contains_key("localhost:8080"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_post_config_invalid_json() {
+        let config = Arc::new(tokio::sync::RwLock::new(Config {
+            sites: HashMap::new(),
+        }));
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/config")
+            .body(Full::new(Bytes::from("not valid json")))
+            .unwrap();
+
+        let response = handle_post_config(req, config.clone()).await.unwrap();
+        assert_eq!(response.status(), 400);
+
+        // Verify config was NOT updated
+        let guard = config.read().await;
+        assert_eq!(guard.sites.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_post_config_empty_body() {
+        let config = Arc::new(tokio::sync::RwLock::new(Config {
+            sites: HashMap::new(),
+        }));
+
+        let req: Request<Empty<Bytes>> = Request::builder()
+            .method("POST")
+            .uri("/config")
+            .body(Empty::new())
+            .unwrap();
 
         let response = handle_post_config(req, config).await.unwrap();
-        assert_eq!(response.status(), 200);
+        assert_eq!(response.status(), 400);
     }
 }

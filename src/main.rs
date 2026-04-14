@@ -179,13 +179,10 @@ async fn run_proxy_server(
     shared_config: Arc<RwLock<Config>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
-    // Note: Currently Proxy struct doesn't support shared config
-    // For now, we'll create a new proxy with current config
-    // TODO: Update Proxy to use Arc<RwLock<Config>> for true hot-reload
-
-    // Create initial proxy with current config
-    let config = shared_config.read().await.clone();
-    let mut proxy = Proxy::new(config);
+    // Create proxy from the shared config handle — any updates to
+    // shared_config (e.g. via POST /config) are immediately visible
+    // to new proxy connections.
+    let mut proxy = Proxy::from_shared(shared_config);
 
     // Set custom concurrency limit if specified
     if max_concurrency > 0 {
