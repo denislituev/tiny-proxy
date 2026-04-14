@@ -1,24 +1,24 @@
 use std::collections::HashMap;
 
 #[cfg(feature = "api")]
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // Models remain as same as we designed
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "api", derive(Serialize))]
+#[cfg_attr(feature = "api", derive(Serialize, Deserialize))]
 pub struct Config {
     pub sites: HashMap<String, SiteConfig>,
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "api", derive(Serialize))]
+#[cfg_attr(feature = "api", derive(Serialize, Deserialize))]
 pub struct SiteConfig {
     pub address: String,
     pub directives: Vec<Directive>,
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "api", derive(Serialize))]
+#[cfg_attr(feature = "api", derive(Serialize, Deserialize))]
 pub enum Directive {
     ReverseProxy {
         to: String,
