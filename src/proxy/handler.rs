@@ -55,7 +55,7 @@ pub fn process_directives(
 
             // Apply header modifications using directive handler
             crate::config::Directive::Header { name, value } => {
-                if let Err(e) = handle_header(name, value, req) {
+                if let Err(e) = handle_header(name, value.as_deref(), req) {
                     info!("   Failed to apply header {}: {}", name, e);
                 }
             }

@@ -318,7 +318,7 @@ fn bench_directive_operations(c: &mut Criterion) {
     let directives = vec![
         Directive::Header {
             name: "X-Custom".to_string(),
-            value: "value".to_string(),
+            value: Some("value".to_string()),
         },
         Directive::ReverseProxy {
             to: "http://backend:9001".to_string(),
@@ -418,7 +418,7 @@ fn create_simple_config() -> Config {
                 directives: vec![
                     Directive::Header {
                         name: "X-Forwarded-For".to_string(),
-                        value: "{remote_host}".to_string(),
+                        value: Some("{remote_host}".to_string()),
                     },
                     Directive::ReverseProxy {
                         to: "http://127.0.0.1:9001".to_string(),
@@ -439,7 +439,7 @@ fn create_medium_config() -> Config {
                     directives: vec![
                         Directive::Header {
                             name: "X-Proxy".to_string(),
-                            value: "tiny-proxy".to_string(),
+                            value: Some("tiny-proxy".to_string()),
                         },
                         Directive::UriReplace {
                             find: "/old".to_string(),
@@ -447,11 +447,11 @@ fn create_medium_config() -> Config {
                         },
                         Directive::Header {
                             name: "X-Custom".to_string(),
-                            value: "value".to_string(),
+                            value: Some("value".to_string()),
                         },
                         Directive::Header {
                             name: "X-Another".to_string(),
-                            value: "value2".to_string(),
+                            value: Some("value2".to_string()),
                         },
                         Directive::ReverseProxy {
                             to: "http://backend:9001".to_string(),
@@ -484,14 +484,14 @@ fn create_complex_config() -> Config {
                         directives: vec![
                             Directive::Header {
                                 name: "X-API-Version".to_string(),
-                                value: "v1".to_string(),
+                                value: Some("v1".to_string()),
                             },
                             Directive::HandlePath {
                                 pattern: "/users/*".to_string(),
                                 directives: vec![
                                     Directive::Header {
                                         name: "X-Service".to_string(),
-                                        value: "user-service".to_string(),
+                                        value: Some("user-service".to_string()),
                                     },
                                     Directive::ReverseProxy {
                                         to: "http://user-service:8001".to_string(),
@@ -503,7 +503,7 @@ fn create_complex_config() -> Config {
                                 directives: vec![
                                     Directive::Header {
                                         name: "X-Service".to_string(),
-                                        value: "order-service".to_string(),
+                                        value: Some("order-service".to_string()),
                                     },
                                     Directive::ReverseProxy {
                                         to: "http://order-service:8002".to_string(),
@@ -512,11 +512,11 @@ fn create_complex_config() -> Config {
                             },
                             Directive::Header {
                                 name: "X-Service".to_string(),
-                                value: "api-service".to_string(),
+                                value: Some("api-service".to_string()),
                             },
                             Directive::Header {
                                 name: "X-Cache-Control".to_string(),
-                                value: "no-cache".to_string(),
+                                value: Some("no-cache".to_string()),
                             },
                             Directive::UriReplace {
                                 find: "/api".to_string(),
@@ -554,7 +554,7 @@ fn create_multi_site_config(count: usize) -> Config {
                 directives: vec![
                     Directive::Header {
                         name: "X-Site-ID".to_string(),
-                        value: i.to_string(),
+                        value: Some(i.to_string()),
                     },
                     Directive::ReverseProxy {
                         to: format!("http://backend:{}", 9000 + i),
@@ -574,7 +574,7 @@ fn create_large_directive_list(count: usize) -> Vec<Directive> {
         if i % 3 == 0 {
             directives.push(Directive::Header {
                 name: format!("X-Header-{}", i),
-                value: format!("value-{}", i),
+                value: Some(format!("value-{}", i)),
             });
         } else if i % 3 == 1 {
             directives.push(Directive::UriReplace {

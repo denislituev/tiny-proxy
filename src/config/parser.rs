@@ -138,15 +138,29 @@ impl FromStr for Config {
                     }
                 }
                 "header" => {
-                    let name = args.first().cloned().ok_or_else(|| {
+                    let raw_name = args.first().cloned().ok_or_else(|| {
                         ProxyError::Parse("Missing 'name' arg for header".to_string())
                     })?;
-                    let value = args.get(1).cloned().ok_or_else(|| {
-                        ProxyError::Parse("Missing 'value' arg for header".to_string())
-                    })?;
-                    Directive::Header {
-                        name: name.to_string(),
-                        value: value.to_string(),
+                    if let Some(name) = raw_name.strip_prefix('-') {
+                        // header -Name => remove header
+                        if name.is_empty() {
+                            return Err(ProxyError::Parse(
+                                "Missing header name after '-' for header removal".to_string(),
+                            ));
+                        }
+                        Directive::Header {
+                            name: name.to_string(),
+                            value: None,
+                        }
+                    } else {
+                        // header Name Value => set header
+                        let value = args.get(1).cloned().ok_or_else(|| {
+                            ProxyError::Parse("Missing 'value' arg for header".to_string())
+                        })?;
+                        Directive::Header {
+                            name: raw_name.to_string(),
+                            value: Some(value.to_string()),
+                        }
                     }
                 }
                 "respond" => {

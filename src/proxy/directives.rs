@@ -24,20 +24,33 @@ pub fn handle_respond(status: &u16, body: &str) -> ActionResult {
     }
 }
 
-/// Handle header directive - add or replace header in request
-/// Supports placeholder substitution: {uuid}, {header.Name}, {env.VAR}
-pub fn handle_header<B>(name: &str, value: &str, req: &mut Request<B>) -> anyhow::Result<()> {
+/// Handle header directive - add, replace, or remove header in request
+/// - `value = Some("...")`: set header with placeholder substitution ({uuid}, {header.Name}, {env.VAR})
+/// - `value = None`: remove header (syntax: `header -Name`)
+pub fn handle_header<B>(
+    name: &str,
+    value: Option<&str>,
+    req: &mut Request<B>,
+) -> anyhow::Result<()> {
     use hyper::header::{HeaderName, HeaderValue};
 
     let header_name = HeaderName::from_bytes(name.as_bytes())?;
 
-    // Process placeholders like {uuid}, {header.Name}, {env.VAR}
-    let processed_value = process_header_substitution(value, req)?;
+    match value {
+        Some(val) => {
+            // Process placeholders like {uuid}, {header.Name}, {env.VAR}
+            let processed_value = process_header_substitution(val, req)?;
 
-    let header_value = HeaderValue::from_str(&processed_value)?;
+            let header_value = HeaderValue::from_str(&processed_value)?;
 
-    req.headers_mut().insert(header_name, header_value);
-    info!("   Applied header: {} = {}", name, processed_value);
+            req.headers_mut().insert(header_name, header_value);
+            info!("   Applied header: {} = {}", name, processed_value);
+        }
+        None => {
+            req.headers_mut().remove(&header_name);
+            info!("   Removed header: {}", name);
+        }
+    }
 
     Ok(())
 }
@@ -71,7 +84,7 @@ mod tests {
     #[test]
     fn test_handle_header_static_value() {
         let mut req = make_request();
-        handle_header("X-Static", "hello-world", &mut req).unwrap();
+        handle_header("X-Static", Some("hello-world"), &mut req).unwrap();
 
         let value = req.headers().get("X-Static").unwrap().to_str().unwrap();
         assert_eq!(value, "hello-world");
@@ -81,7 +94,7 @@ mod tests {
     fn test_handle_header_uuid_placeholder() {
         // {uuid} should be replaced with a real UUID like "550e8400-e29b-41d4-..."
         let mut req = make_request();
-        handle_header("X-Request-ID", "{uuid}", &mut req).unwrap();
+        handle_header("X-Request-ID", Some("{uuid}"), &mut req).unwrap();
 
         let value = req.headers().get("X-Request-ID").unwrap().to_str().unwrap();
 
@@ -94,7 +107,7 @@ mod tests {
     fn test_handle_header_header_placeholder() {
         // {header.Authorization} should be replaced with "Bearer secret-token"
         let mut req = make_request();
-        handle_header("X-Client-Auth", "{header.Authorization}", &mut req).unwrap();
+        handle_header("X-Client-Auth", Some("{header.Authorization}"), &mut req).unwrap();
 
         let value = req
             .headers()
@@ -114,7 +127,7 @@ mod tests {
         std::env::set_var("TEST_PROXY_VAR", "test-value-123");
 
         let mut req = make_request();
-        handle_header("X-Env-Test", "{env.TEST_PROXY_VAR}", &mut req).unwrap();
+        handle_header("X-Env-Test", Some("{env.TEST_PROXY_VAR}"), &mut req).unwrap();
 
         let value = req.headers().get("X-Env-Test").unwrap().to_str().unwrap();
 
@@ -124,5 +137,28 @@ mod tests {
         );
 
         std::env::remove_var("TEST_PROXY_VAR");
+    }
+
+    #[test]
+    fn test_handle_header_remove() {
+        let mut req = make_request();
+        assert!(
+            req.headers().get("Authorization").is_some(),
+            "Authorization header should exist before removal"
+        );
+
+        handle_header("Authorization", None, &mut req).unwrap();
+
+        assert!(
+            req.headers().get("Authorization").is_none(),
+            "Authorization header should be removed"
+        );
+    }
+
+    #[test]
+    fn test_handle_header_remove_nonexistent() {
+        let mut req = make_request();
+        // Removing a header that doesn't exist should not error
+        handle_header("X-Nonexistent", None, &mut req).unwrap();
     }
 }
