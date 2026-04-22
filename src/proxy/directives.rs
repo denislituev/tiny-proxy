@@ -61,6 +61,19 @@ pub fn handle_uri_replace(find: &str, replace: &str, path: &mut String) {
     info!("   Applied uri_replace: {} → {}", find, replace);
 }
 
+/// Handle strip_prefix directive - remove a prefix from the URI path
+/// Ensures the result always starts with `/`
+pub fn handle_strip_prefix(prefix: &str, path: &mut String) {
+    if let Some(stripped) = path.strip_prefix(prefix) {
+        *path = if stripped.is_empty() || !stripped.starts_with('/') {
+            format!("/{}", stripped)
+        } else {
+            stripped.to_string()
+        };
+        info!("   Applied strip_prefix: {} → {}", prefix, *path);
+    }
+}
+
 /// Handle method directive - check if request method matches allowed methods
 pub fn handle_method(methods: &[String], req: &Request<Incoming>) -> bool {
     methods
@@ -160,5 +173,36 @@ mod tests {
         let mut req = make_request();
         // Removing a header that doesn't exist should not error
         handle_header("X-Nonexistent", None, &mut req).unwrap();
+    }
+
+    #[test]
+    fn test_handle_strip_prefix_basic() {
+        let mut path = "/api/users/123".to_string();
+        handle_strip_prefix("/api", &mut path);
+        assert_eq!(path, "/users/123");
+    }
+
+    #[test]
+    fn test_handle_strip_prefix_exact_match() {
+        let mut path = "/api".to_string();
+        handle_strip_prefix("/api", &mut path);
+        assert_eq!(path, "/", "Exact match should result in root path");
+    }
+
+    #[test]
+    fn test_handle_strip_prefix_no_match() {
+        let mut path = "/users/123".to_string();
+        handle_strip_prefix("/api", &mut path);
+        assert_eq!(
+            path, "/users/123",
+            "Should remain unchanged when prefix doesn't match"
+        );
+    }
+
+    #[test]
+    fn test_handle_strip_prefix_trailing_slash() {
+        let mut path = "/api/v2/users".to_string();
+        handle_strip_prefix("/api/v2", &mut path);
+        assert_eq!(path, "/users");
     }
 }
