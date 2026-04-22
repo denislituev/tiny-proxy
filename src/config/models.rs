@@ -39,6 +39,9 @@ pub enum Directive {
         methods: Vec<String>,
         directives: Vec<Directive>,
     },
+    StripPrefix {
+        prefix: String,
+    },
     Respond {
         status: u16,
         body: String,

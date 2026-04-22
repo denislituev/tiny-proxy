@@ -173,6 +173,14 @@ impl FromStr for Config {
                         body: body.to_string(),
                     }
                 }
+                "strip_prefix" => {
+                    let prefix = args.first().cloned().ok_or_else(|| {
+                        ProxyError::Parse("Missing 'prefix' arg for strip_prefix".to_string())
+                    })?;
+                    Directive::StripPrefix {
+                        prefix: prefix.to_string(),
+                    }
+                }
                 _ => {
                     return Err(ProxyError::Parse(format!(
                         "Unknown directive '{}' on line {}",

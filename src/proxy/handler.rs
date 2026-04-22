@@ -15,7 +15,8 @@ use crate::config::Config;
 use crate::proxy::ActionResult;
 
 use crate::proxy::directives::{
-    handle_header, handle_method, handle_respond, handle_reverse_proxy, handle_uri_replace,
+    handle_header, handle_method, handle_respond, handle_reverse_proxy, handle_strip_prefix,
+    handle_uri_replace,
 };
 
 /// Unified response body type - can handle both streaming (Incoming) and buffered (Full<Bytes>)
@@ -63,6 +64,11 @@ pub fn process_directives(
             // Apply URI replacements using directive handler
             crate::config::Directive::UriReplace { find, replace } => {
                 handle_uri_replace(find, replace, &mut modified_path);
+            }
+
+            // Strip prefix from URI path
+            crate::config::Directive::StripPrefix { prefix } => {
+                handle_strip_prefix(prefix, &mut modified_path);
             }
 
             // Handle path-based routing recursively
