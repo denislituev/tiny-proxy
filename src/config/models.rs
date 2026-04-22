@@ -33,7 +33,7 @@ pub enum Directive {
     },
     Header {
         name: String,
-        value: String,
+        value: Option<String>,
     },
     Method {
         methods: Vec<String>,
