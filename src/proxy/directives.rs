@@ -24,6 +24,16 @@ pub fn handle_respond(status: &u16, body: &str) -> ActionResult {
     }
 }
 
+/// Handle redirect directive - return redirect response with Location header
+/// Supported status codes: 301 (permanent), 302 (temporary), 307, 308
+pub fn handle_redirect(status: &u16, url: &str) -> ActionResult {
+    info!("   Redirecting ({}) to: {}", status, url);
+    ActionResult::Redirect {
+        status: *status,
+        url: url.to_string(),
+    }
+}
+
 /// Handle header directive - add, replace, or remove header in request
 /// - `value = Some("...")`: set header with placeholder substitution ({uuid}, {header.Name}, {env.VAR})
 /// - `value = None`: remove header (syntax: `header -Name`)
@@ -204,5 +214,29 @@ mod tests {
         let mut path = "/api/v2/users".to_string();
         handle_strip_prefix("/api/v2", &mut path);
         assert_eq!(path, "/users");
+    }
+
+    #[test]
+    fn test_handle_redirect_301() {
+        let result = handle_redirect(&301, "https://example.com/new");
+        match result {
+            ActionResult::Redirect { status, url } => {
+                assert_eq!(status, 301);
+                assert_eq!(url, "https://example.com/new");
+            }
+            _ => panic!("Expected Redirect action"),
+        }
+    }
+
+    #[test]
+    fn test_handle_redirect_302() {
+        let result = handle_redirect(&302, "/temporary");
+        match result {
+            ActionResult::Redirect { status, url } => {
+                assert_eq!(status, 302);
+                assert_eq!(url, "/temporary");
+            }
+            _ => panic!("Expected Redirect action"),
+        }
     }
 }
