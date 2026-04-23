@@ -9,4 +9,8 @@ pub enum ActionResult {
         backend_url: String,
         path_to_send: String,
     },
+    Redirect {
+        status: u16,
+        url: String,
+    },
 }

@@ -181,6 +181,29 @@ impl FromStr for Config {
                         prefix: prefix.to_string(),
                     }
                 }
+                "redirect" => {
+                    let (status, url) = if args.len() >= 2 {
+                        // redirect <status> <url>
+                        let status: u16 = args[0].parse().map_err(|_| {
+                            ProxyError::Parse(format!(
+                                "Invalid status code for redirect: {}",
+                                args[0]
+                            ))
+                        })?;
+                        let url = args[1..].join(" ");
+                        (status, url)
+                    } else {
+                        // redirect <url> — default 301 permanent
+                        let url = args.first().cloned().ok_or_else(|| {
+                            ProxyError::Parse("Missing 'url' arg for redirect".to_string())
+                        })?;
+                        (301u16, url.to_string())
+                    };
+                    Directive::Redirect {
+                        status,
+                        url: url.to_string(),
+                    }
+                }
                 _ => {
                     return Err(ProxyError::Parse(format!(
                         "Unknown directive '{}' on line {}",

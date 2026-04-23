@@ -15,8 +15,8 @@ use crate::config::Config;
 use crate::proxy::ActionResult;
 
 use crate::proxy::directives::{
-    handle_header, handle_method, handle_respond, handle_reverse_proxy, handle_strip_prefix,
-    handle_uri_replace,
+    handle_header, handle_method, handle_redirect, handle_respond, handle_reverse_proxy,
+    handle_strip_prefix, handle_uri_replace,
 };
 
 /// Unified response body type - can handle both streaming (Incoming) and buffered (Full<Bytes>)
@@ -95,6 +95,11 @@ pub fn process_directives(
                 }
             }
 
+            // Redirect - return redirect response with Location header
+            crate::config::Directive::Redirect { status, url } => {
+                return Ok(handle_redirect(status, url));
+            }
+
             // Direct response - return immediately using directive handler
             crate::config::Directive::Respond { status, body } => {
                 return Ok(handle_respond(status, body));
@@ -163,6 +168,16 @@ pub async fn proxy(
 
     // Execute action
     match action_result {
+        ActionResult::Redirect { status, url } => {
+            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::FOUND);
+            let boxed: ResponseBody = Full::new(Bytes::from(url.clone()))
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .boxed();
+            Ok(Response::builder()
+                .status(status_code)
+                .header("Location", &url)
+                .body(boxed)?)
+        }
         ActionResult::Respond { status, body } => {
             let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
             let boxed: ResponseBody = Full::new(Bytes::from(body))

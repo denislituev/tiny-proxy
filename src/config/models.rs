@@ -42,6 +42,10 @@ pub enum Directive {
     StripPrefix {
         prefix: String,
     },
+    Redirect {
+        status: u16,
+        url: String,
+    },
     Respond {
         status: u16,
         body: String,
