@@ -41,7 +41,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tiny-proxy = "0.2"
+tiny-proxy = "0.3"
 ```
 
 ## Usage
@@ -169,13 +169,24 @@ site_address {
 
 #### `reverse_proxy`
 
-Forward requests to a backend server.
+Forward requests to a backend server. Supports optional block syntax for timeout configuration.
 
 ```caddy
+# Simple
 localhost:8080 {
     reverse_proxy http://backend:3000
 }
+
+# With timeouts (for LLM/SSE backends)
+localhost:8080 {
+    reverse_proxy http://llm-backend:8000 {
+        connect_timeout 10s
+        read_timeout 600s
+    }
+}
 ```
+
+Timeout values support duration suffixes: `30s`, `5m`, `2h`, `1d`, or plain numbers (seconds).
 
 #### `handle_path`
 
@@ -202,12 +213,19 @@ localhost:8080 {
 
 #### `header`
 
-Add or modify request headers.
+Add, modify, or remove request headers.
 
 ```caddy
 localhost:8080 {
+    # Add header with placeholder
     header X-Request-ID {uuid}
+
+    # Add static header
     header X-Custom-Header custom-value
+
+    # Remove header (prefix with -)
+    header -Accept-Encoding
+
     reverse_proxy backend:3000
 }
 ```
@@ -224,6 +242,35 @@ localhost:8080 {
     reverse_proxy backend:3000
 }
 ```
+
+#### `strip_prefix`
+
+Remove a prefix from the request URI path.
+
+```caddy
+localhost:8080 {
+    strip_prefix /api
+    reverse_proxy http://backend:3000
+}
+```
+
+Request `/api/users/123` → backend receives `/users/123`.
+
+#### `redirect`
+
+Return a redirect response with `Location` header.
+
+```caddy
+localhost:8080 {
+    # Permanent redirect (default 301)
+    redirect https://new-domain.com
+
+    # Temporary redirect
+    redirect 302 /maintenance
+}
+```
+
+Supported status codes: `301` (permanent), `302` (temporary), `307`, `308`.
 
 #### `respond`
 
@@ -314,19 +361,19 @@ Use placeholders in header values:
 ```toml
 # Minimal - core proxy only (for embedding in other applications)
 [dependencies]
-tiny-proxy = { version = "0.2", default-features = false }
+tiny-proxy = { version = "0.3", default-features = false }
 
 # With HTTPS backend support
 [dependencies]
-tiny-proxy = { version = "0.2", default-features = false, features = ["tls"] }
+tiny-proxy = { version = "0.3", default-features = false, features = ["tls"] }
 
 # With management API
 [dependencies]
-tiny-proxy = { version = "0.2", default-features = false, features = ["tls", "api"] }
+tiny-proxy = { version = "0.3", default-features = false, features = ["tls", "api"] }
 
 # Full standalone (same as default)
 [dependencies]
-tiny-proxy = "0.2"
+tiny-proxy = "0.3"
 ```
 
 #### `cli` (default)
@@ -476,7 +523,6 @@ cargo run --example background
 
 - ⏳ Static file serving
 - ⏳ Try files (SPA support)
-- ⏳ Timeout configurations
 - ⏳ Buffering control
 - ⏳ TLS/SSL support
 - ⏳ WebSocket support

@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-04-27
+
+### Added
+
+- `header -Name` directive — remove request headers before forwarding to backend (#13)
+- `strip_prefix` directive — remove a prefix from the request URI path (#14)
+- `redirect` directive — return 301/302/307/308 redirect responses with `Location` header (#16)
+- Configurable timeouts for `reverse_proxy` — block syntax with `connect_timeout` and `read_timeout` (#17)
+- `parse_duration` helper — supports `30s`, `5m`, `2h`, `1d` and plain numbers
+- Block syntax for `reverse_proxy` — allows timeout configuration inside `reverse_proxy URL { ... }`
+- 15 new unit tests: header removal (2), strip_prefix (4), redirect (2), parse_duration (5), reverse_proxy parsing (4)
+- Integration test verifying all Phase 1 directives end-to-end
+
+### Changed
+
+- `Directive::Header` value field changed from `String` to `Option<String>` (breaking API change)
+- `Directive::ReverseProxy` now includes `connect_timeout: Option<u64>` and `read_timeout: Option<u64>` fields
+- `ActionResult::ReverseProxy` now includes timeout fields
+- `handle_reverse_proxy()` signature updated to accept timeout parameters
+- Replaced `.unwrap()` with `?` in `proxy()` handler for `Respond` and `ReverseProxy` response building
+- Hardcoded 30-second backend timeout replaced with configurable `read_timeout` (default: 30s)
+- Benchmarks updated for new `Directive` variant fields
+
+### Configuration Examples
+
+```caddy
+# Header removal
+localhost:8080 {
+    header -Authorization
+    reverse_proxy http://backend:3000
+}
+
+# Strip prefix
+localhost:8080 {
+    strip_prefix /api
+    reverse_proxy http://backend:3000
+}
+
+# Redirect
+localhost:8080 {
+    redirect 301 https://new-domain.com
+}
+
+# Configurable timeouts (for LLM/SSE backends)
+localhost:8080 {
+    reverse_proxy http://llm-backend:8000 {
+        connect_timeout 10s
+        read_timeout 600s
+    }
+}
+```
+
 ## [0.2.0] - 2026-04-14
 
 ### Added
@@ -66,5 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - GitHub Release creation
 - Example programs for library usage
 
+[0.3.0]: https://github.com/denislituev/tiny-proxy/releases/tag/v0.3.0
 [0.2.0]: https://github.com/denislituev/tiny-proxy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/denislituev/tiny-proxy/releases/tag/v0.1.0
