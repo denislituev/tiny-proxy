@@ -322,6 +322,8 @@ fn bench_directive_operations(c: &mut Criterion) {
         },
         Directive::ReverseProxy {
             to: "http://backend:9001".to_string(),
+            connect_timeout: None,
+            read_timeout: None,
         },
         Directive::UriReplace {
             find: "/old".to_string(),
@@ -422,6 +424,8 @@ fn create_simple_config() -> Config {
                     },
                     Directive::ReverseProxy {
                         to: "http://127.0.0.1:9001".to_string(),
+                        connect_timeout: None,
+                        read_timeout: None,
                     },
                 ],
             },
@@ -455,6 +459,8 @@ fn create_medium_config() -> Config {
                         },
                         Directive::ReverseProxy {
                             to: "http://backend:9001".to_string(),
+                            connect_timeout: None,
+                            read_timeout: None,
                         },
                     ],
                 },
@@ -465,6 +471,8 @@ fn create_medium_config() -> Config {
                     address: "localhost:8081".to_string(),
                     directives: vec![Directive::ReverseProxy {
                         to: "http://backend:9002".to_string(),
+                        connect_timeout: None,
+                        read_timeout: None,
                     }],
                 },
             ),
@@ -495,6 +503,8 @@ fn create_complex_config() -> Config {
                                     },
                                     Directive::ReverseProxy {
                                         to: "http://user-service:8001".to_string(),
+                                        connect_timeout: None,
+                                        read_timeout: None,
                                     },
                                 ],
                             },
@@ -507,6 +517,8 @@ fn create_complex_config() -> Config {
                                     },
                                     Directive::ReverseProxy {
                                         to: "http://order-service:8002".to_string(),
+                                        connect_timeout: None,
+                                        read_timeout: None,
                                     },
                                 ],
                             },
@@ -524,6 +536,8 @@ fn create_complex_config() -> Config {
                             },
                             Directive::ReverseProxy {
                                 to: "http://api-service:8000".to_string(),
+                                connect_timeout: None,
+                                read_timeout: None,
                             },
                         ],
                     },
@@ -558,6 +572,8 @@ fn create_multi_site_config(count: usize) -> Config {
                     },
                     Directive::ReverseProxy {
                         to: format!("http://backend:{}", 9000 + i),
+                        connect_timeout: None,
+                        read_timeout: None,
                     },
                 ],
             },

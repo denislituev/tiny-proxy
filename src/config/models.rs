@@ -22,6 +22,8 @@ pub struct SiteConfig {
 pub enum Directive {
     ReverseProxy {
         to: String,
+        connect_timeout: Option<u64>,
+        read_timeout: Option<u64>,
     },
     HandlePath {
         pattern: String,
