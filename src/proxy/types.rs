@@ -8,6 +8,8 @@ pub enum ActionResult {
     ReverseProxy {
         backend_url: String,
         path_to_send: String,
+        connect_timeout: Option<u64>,
+        read_timeout: Option<u64>,
     },
     Redirect {
         status: u16,

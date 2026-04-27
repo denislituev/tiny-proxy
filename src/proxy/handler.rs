@@ -106,8 +106,17 @@ pub fn process_directives(
             }
 
             // Reverse proxy - return action using directive handler
-            crate::config::Directive::ReverseProxy { to } => {
-                return Ok(handle_reverse_proxy(to, &modified_path));
+            crate::config::Directive::ReverseProxy {
+                to,
+                connect_timeout,
+                read_timeout,
+            } => {
+                return Ok(handle_reverse_proxy(
+                    to,
+                    &modified_path,
+                    *connect_timeout,
+                    *read_timeout,
+                ));
             }
         }
     }
@@ -183,11 +192,13 @@ pub async fn proxy(
             let boxed: ResponseBody = Full::new(Bytes::from(body))
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                 .boxed();
-            Ok(Response::builder().status(status_code).body(boxed).unwrap())
+            Ok(Response::builder().status(status_code).body(boxed)?)
         }
         ActionResult::ReverseProxy {
             backend_url,
             path_to_send,
+            connect_timeout: _,
+            read_timeout,
         } => {
             // Add protocol if missing
             let backend_with_proto =
@@ -262,8 +273,9 @@ pub async fn proxy(
             // Compression breaks streaming and SSE
             req.headers_mut().remove("accept-encoding");
 
-            // Forward request to backend with 30 second timeout
-            match timeout(Duration::from_secs(30), client.request(req)).await {
+            // Forward request to backend with configurable timeout (default 30s)
+            let backend_timeout = read_timeout.unwrap_or(30);
+            match timeout(Duration::from_secs(backend_timeout), client.request(req)).await {
                 Ok(Ok(response)) => {
                     // Successfully received response from backend
                     let status = response.status();
@@ -293,7 +305,7 @@ pub async fn proxy(
                         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
                         .boxed();
 
-                    Ok(builder.body(boxed).unwrap())
+                    Ok(builder.body(boxed)?)
                 }
                 Ok(Err(e)) => {
                     // Backend unavailable - return 502 Bad Gateway
@@ -312,7 +324,10 @@ pub async fn proxy(
                 }
                 Err(_) => {
                     // Timeout - return 504 Gateway Timeout
-                    error!("Backend request timed out after 30 seconds");
+                    error!(
+                        "Backend request timed out after {} seconds",
+                        backend_timeout
+                    );
 
                     Ok(error_response(
                         StatusCode::GATEWAY_TIMEOUT,

@@ -7,11 +7,21 @@ use crate::auth::process_header_substitution;
 use crate::proxy::ActionResult;
 
 /// Handle reverse_proxy directive
-pub fn handle_reverse_proxy(to: &str, path: &str) -> ActionResult {
-    info!("   Proxying to: {}", to);
+pub fn handle_reverse_proxy(
+    to: &str,
+    path: &str,
+    connect_timeout: Option<u64>,
+    read_timeout: Option<u64>,
+) -> ActionResult {
+    info!(
+        "   Proxying to: {} (connect_timeout: {:?}, read_timeout: {:?})",
+        to, connect_timeout, read_timeout
+    );
     ActionResult::ReverseProxy {
         backend_url: to.to_string(),
         path_to_send: path.to_string(),
+        connect_timeout,
+        read_timeout,
     }
 }
 
