@@ -1,3 +1,4 @@
+mod access_log;
 mod directives;
 pub mod handler;
 #[allow(clippy::module_inception)]

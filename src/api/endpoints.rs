@@ -29,7 +29,7 @@ where
         .status(200)
         .header("Content-Type", "application/json")
         .body(Full::new(Bytes::from(json)))
-        .unwrap();
+        .expect("static response build");
 
     Ok(response)
 }
@@ -74,9 +74,9 @@ where
                 .status(400)
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(
-                    serde_json::to_string(&error_json).unwrap(),
+                    serde_json::to_string(&error_json).expect("json!() is always valid"),
                 )))
-                .unwrap();
+                .expect("static response build");
             return Ok(response);
         }
     };
@@ -92,9 +92,9 @@ where
                 .status(400)
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(
-                    serde_json::to_string(&error_json).unwrap(),
+                    serde_json::to_string(&error_json).expect("json!() is always valid"),
                 )))
-                .unwrap();
+                .expect("static response build");
             return Ok(response);
         }
     };
@@ -112,9 +112,9 @@ where
                 .status(400)
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(
-                    serde_json::to_string(&error_json).unwrap(),
+                    serde_json::to_string(&error_json).expect("json!() is always valid"),
                 )))
-                .unwrap();
+                .expect("static response build");
             return Ok(response);
         }
     };
@@ -136,7 +136,7 @@ where
         .body(Full::new(Bytes::from(
             r#"{"status": "success", "message": "Configuration updated"}"#.to_string(),
         )))
-        .unwrap();
+        .expect("static response build");
 
     Ok(response)
 }
@@ -158,9 +158,9 @@ where
         .status(200)
         .header("Content-Type", "application/json")
         .body(Full::new(Bytes::from(
-            serde_json::to_string(&health).unwrap(),
+            serde_json::to_string(&health).expect("json!() is always valid"),
         )))
-        .unwrap();
+        .expect("static response build");
 
     Ok(response)
 }

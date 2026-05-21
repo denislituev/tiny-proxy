@@ -32,7 +32,7 @@ fn unauthorized_response(message: &str) -> Response<Full<Bytes>> {
         .status(StatusCode::UNAUTHORIZED)
         .header("Content-Type", "application/json")
         .body(Full::new(Bytes::from(body)))
-        .unwrap()
+        .expect("static response build")
 }
 
 /// Logging middleware

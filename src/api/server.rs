@@ -105,8 +105,8 @@ async fn handle_api_request(
             // 404 Not Found
             let response = Response::builder()
                 .status(404)
-                .body(Full::new(bytes::Bytes::from("Not Found".to_string())))
-                .unwrap();
+                .body(Full::new(bytes::Bytes::from("Not Found")))
+                .expect("static response build");
             Ok(response)
         }
     }

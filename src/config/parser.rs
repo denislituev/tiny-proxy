@@ -112,8 +112,10 @@ impl FromStr for Config {
             // 2. Handle closing brace
             if line == "}" {
                 if directive_stack.len() > 1 {
-                    let finished_directives = directive_stack.pop().unwrap();
-                    let block_info = block_stack.pop().unwrap();
+                    let finished_directives = directive_stack
+                        .pop()
+                        .expect("directive_stack has at least 2 elements");
+                    let block_info = block_stack.pop().expect("block_stack has matching entry");
 
                     let completed_directive = match block_info.directive_type.as_str() {
                         "handle_path" => {
@@ -145,12 +147,14 @@ impl FromStr for Config {
 
                     directive_stack
                         .last_mut()
-                        .unwrap()
+                        .expect("directive_stack has parent after pop")
                         .push(completed_directive);
                 } else {
                     // Site block closed
                     if let Some(address) = current_site_address.take() {
-                        let site_directives = directive_stack.pop().unwrap();
+                        let site_directives = directive_stack
+                            .pop()
+                            .expect("site directive_stack is non-empty");
                         sites.insert(
                             address.clone(),
                             SiteConfig {
@@ -309,7 +313,10 @@ impl FromStr for Config {
                 }
             };
 
-            directive_stack.last_mut().unwrap().push(directive);
+            directive_stack
+                .last_mut()
+                .expect("directive_stack is non-empty")
+                .push(directive);
         }
 
         Ok(Config { sites })
