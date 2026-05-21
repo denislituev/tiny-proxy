@@ -76,7 +76,8 @@ name = "proxy_bench"
 harness = false
 
 [features]
-default = ["cli", "tls", "api"]
+default = ["cli", "tls", "api", "logging"]
 cli = ["dep:clap", "dep:tracing-subscriber"]
 tls = ["dep:hyper-rustls"]
 api = ["dep:serde", "dep:serde_json"]
+logging = []

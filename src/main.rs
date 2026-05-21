@@ -110,7 +110,7 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
     // Wait for shutdown signal
     tokio::select! {
         // API server completed
-        api_result = async { api_handle.as_mut().unwrap().await } => {
+        api_result = async { api_handle.as_mut().expect("api_handle is Some").await } => {
             match api_result {
                 Ok(Ok(())) => info!("API server shut down gracefully"),
                 Ok(Err(e)) => error!("API server error: {}", e),
@@ -120,7 +120,7 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
             let _ = shutdown_tx.send(());
         },
         // Proxy server completed
-        proxy_result = async { proxy_handle.as_mut().unwrap().await } => {
+        proxy_result = async { proxy_handle.as_mut().expect("proxy_handle is Some").await } => {
             match proxy_result {
                 Ok(Ok(())) => info!("Proxy server shut down gracefully"),
                 Ok(Err(e)) => error!("Proxy server error: {}", e),
@@ -142,7 +142,12 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
     let timeout = tokio::time::Duration::from_secs(30);
 
     // Wait for API server
-    match tokio::time::timeout(timeout, api_handle.take().unwrap()).await {
+    match tokio::time::timeout(
+        timeout,
+        api_handle.take().expect("api_handle consumed once"),
+    )
+    .await
+    {
         Ok(Ok(Ok(()))) => info!("API server shut down"),
         Ok(Ok(Err(e))) => warn!("API server shutdown error: {}", e),
         Ok(Err(e)) => warn!("API server task error: {}", e),
@@ -155,7 +160,12 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
     }
 
     // Wait for proxy server
-    match tokio::time::timeout(timeout, proxy_handle.take().unwrap()).await {
+    match tokio::time::timeout(
+        timeout,
+        proxy_handle.take().expect("proxy_handle consumed once"),
+    )
+    .await
+    {
         Ok(Ok(Ok(()))) => info!("Proxy server shut down"),
         Ok(Ok(Err(e))) => warn!("Proxy server shutdown error: {}", e),
         Ok(Err(e)) => warn!("Proxy server task error: {}", e),

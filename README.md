@@ -527,7 +527,7 @@ cargo run --example background
 - ⏳ TLS/SSL support
 - ⏳ WebSocket support
 - ⏳ Rate limiting
-- ⏳ Request/response logging
+- ✅ Structured access log with X-Request-ID (method, path, host, status, duration, bytes_sent)
 - ⏳ Metrics and monitoring
 
 ## Contributing

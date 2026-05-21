@@ -11,7 +11,15 @@ use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use tracing::{error, info};
 
+#[cfg(feature = "logging")]
+use tracing::info_span;
+#[cfg(feature = "logging")]
+use tracing::Instrument;
+
 use crate::config::Config;
+#[cfg(feature = "logging")]
+use crate::proxy::access_log::AccessLogGuard;
+use crate::proxy::access_log::{ensure_request_id, final_request_id};
 use crate::proxy::ActionResult;
 
 use crate::proxy::directives::{
@@ -41,8 +49,12 @@ fn is_hop_header(name: &header::HeaderName) -> bool {
     )
 }
 
-/// Process directives in order, applying modifications and returning final action
-/// Supports recursive handling of handle_path blocks
+/// Process directives in order, applying modifications and returning final action.
+/// Supports recursive handling of handle_path blocks.
+///
+/// Note: `info!` logs here are correlated with request ID only when the `logging`
+/// feature is enabled (via the tracing span set in `proxy()`). Without `logging`,
+/// these logs appear without request context.
 pub fn process_directives(
     directives: &[crate::config::Directive],
     req: &mut Request<Incoming>,
@@ -52,60 +64,48 @@ pub fn process_directives(
 
     for directive in directives {
         match directive {
-            // Apply header modifications using directive handler
-
-            // Apply header modifications using directive handler
             crate::config::Directive::Header { name, value } => {
                 if let Err(e) = handle_header(name, value.as_deref(), req) {
                     info!("   Failed to apply header {}: {}", name, e);
                 }
             }
 
-            // Apply URI replacements using directive handler
             crate::config::Directive::UriReplace { find, replace } => {
                 handle_uri_replace(find, replace, &mut modified_path);
             }
 
-            // Strip prefix from URI path
             crate::config::Directive::StripPrefix { prefix } => {
                 handle_strip_prefix(prefix, &mut modified_path);
             }
 
-            // Handle path-based routing recursively
             crate::config::Directive::HandlePath {
                 pattern,
                 directives: nested_directives,
             } => {
                 if let Some(remaining_path) = match_pattern(pattern, &modified_path) {
                     info!("   Matched handle_path: {}", pattern);
-                    // Recursively process nested directives with remaining path
                     return process_directives(nested_directives, req, &remaining_path);
                 }
             }
 
-            // Method-based directives
             crate::config::Directive::Method {
                 methods,
                 directives: nested_directives,
             } => {
                 if handle_method(methods, req) {
                     info!("   Matched method directive");
-                    // Process nested directives with same path
                     return process_directives(nested_directives, req, &modified_path);
                 }
             }
 
-            // Redirect - return redirect response with Location header
             crate::config::Directive::Redirect { status, url } => {
                 return Ok(handle_redirect(status, url));
             }
 
-            // Direct response - return immediately using directive handler
             crate::config::Directive::Respond { status, body } => {
                 return Ok(handle_respond(status, body));
             }
 
-            // Reverse proxy - return action using directive handler
             crate::config::Directive::ReverseProxy {
                 to,
                 connect_timeout,
@@ -143,204 +143,273 @@ pub async fn proxy(
     config: Arc<Config>,
     remote_addr: std::net::SocketAddr,
 ) -> Result<Response<ResponseBody>, Error> {
-    // Get path from URI (using String to avoid borrow conflict with mutable req)
-    let path = req.uri().path().to_string();
+    // Generate or reuse request ID
+    let initial_request_id = ensure_request_id(&mut req);
 
-    // Get host from Host header (includes port, e.g., "localhost:8080")
+    // Extract request info before processing
+    #[cfg(feature = "logging")]
+    let method = req.method().clone().to_string();
+    let path = req.uri().path().to_string();
     let host = req
         .headers()
         .get(hyper::header::HOST)
         .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost");
+        .unwrap_or("localhost")
+        .to_string();
 
-    // Logging with enabled check to avoid string formatting when disabled
-    if tracing::enabled!(tracing::Level::INFO) {
-        // Removed info logging from hot path for performance
-        // Use DEBUG level if needed for troubleshooting
-    }
+    #[cfg(feature = "logging")]
+    let span = info_span!("request", req_id = %initial_request_id);
 
-    // Find site configuration by host (with port!)
-    let site_config = match config.sites.get(host) {
-        Some(config) => config,
-        None => {
-            error!("No configuration found for host: {}", host);
-            return Ok(error_response(
-                StatusCode::NOT_FOUND,
-                &format!("No configuration found for host: {}", host),
-            ));
+    #[allow(unused_variables)]
+    let future = async move {
+        #[cfg(feature = "logging")]
+        let mut log_guard = AccessLogGuard::new(
+            initial_request_id.clone(),
+            remote_addr,
+            method,
+            path.clone(),
+            host.clone(),
+        );
+
+        // Find site configuration by host (with port!)
+        let site_config = match config.sites.get(&host) {
+            Some(config) => config,
+            None => {
+                error!("No configuration found for host: {}", host);
+                let (response, _body_len) = error_response_with_id(
+                    StatusCode::NOT_FOUND,
+                    &format!("No configuration found for host: {}", host),
+                    &initial_request_id,
+                );
+                #[cfg(feature = "logging")]
+                {
+                    log_guard.set_bytes_sent(_body_len);
+                    log_guard.finish(404);
+                }
+                return Ok(response);
+            }
+        };
+
+        // Process directives in correct order
+        let action_result = match process_directives(&site_config.directives, &mut req, &path) {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Directive processing error: {}", e);
+                let final_id = final_request_id(&req, &initial_request_id);
+                #[cfg(feature = "logging")]
+                {
+                    log_guard.set_request_id(final_id.clone());
+                    tracing::Span::current().record("req_id", final_id.as_str());
+                }
+                let (response, _body_len) =
+                    error_response_with_id(StatusCode::INTERNAL_SERVER_ERROR, &e, &final_id);
+                #[cfg(feature = "logging")]
+                {
+                    log_guard.set_bytes_sent(_body_len);
+                    log_guard.finish(500);
+                }
+                return Ok(response);
+            }
+        };
+
+        // Read final request ID (directive may have overwritten X-Request-ID)
+        let request_id = final_request_id(&req, &initial_request_id);
+        #[cfg(feature = "logging")]
+        {
+            log_guard.set_request_id(request_id.clone());
+            // Update the tracing span with the final req_id
+            tracing::Span::current().record("req_id", request_id.as_str());
+        }
+
+        // Execute action
+        match action_result {
+            ActionResult::Redirect { status, url } => {
+                let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::FOUND);
+
+                let boxed: ResponseBody = Full::new(Bytes::new())
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                    .boxed();
+                let response = Response::builder()
+                    .status(status_code)
+                    .header("Location", &url)
+                    .header("X-Request-ID", &request_id)
+                    .body(boxed)?;
+                #[cfg(feature = "logging")]
+                {
+                    log_guard.set_bytes_sent(0);
+                    log_guard.finish(status_code.as_u16());
+                }
+                Ok(response)
+            }
+            ActionResult::Respond { status, body } => {
+                let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+                let _body_len = body.len();
+
+                let boxed: ResponseBody = Full::new(Bytes::from(body))
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                    .boxed();
+                let response = Response::builder()
+                    .status(status_code)
+                    .header("X-Request-ID", &request_id)
+                    .body(boxed)?;
+                #[cfg(feature = "logging")]
+                {
+                    log_guard.set_bytes_sent(_body_len);
+                    log_guard.finish(status_code.as_u16());
+                }
+                Ok(response)
+            }
+            ActionResult::ReverseProxy {
+                backend_url,
+                path_to_send,
+                connect_timeout: _,
+                read_timeout,
+            } => {
+                // Add protocol if missing
+                let backend_with_proto =
+                    if backend_url.starts_with("http://") || backend_url.starts_with("https://") {
+                        backend_url
+                    } else {
+                        format!("http://{}", backend_url)
+                    };
+
+                // Use Uri::from_parts() instead of format!() + parse() - faster!
+                let mut parts = backend_with_proto.parse::<Uri>()?.into_parts();
+                parts.path_and_query = Some(path_to_send.parse()?);
+                let new_uri = Uri::from_parts(parts)?;
+
+                *req.uri_mut() = new_uri.clone();
+
+                // Save original host for X-Forwarded headers
+                let original_host_header = req.headers().get(hyper::header::HOST).cloned();
+
+                // Update Host header for backend
+                req.headers_mut().remove(hyper::header::HOST);
+                if let Some(authority) = new_uri.authority() {
+                    if let Ok(host_value) = authority.as_str().parse::<hyper::header::HeaderValue>()
+                    {
+                        req.headers_mut().insert(hyper::header::HOST, host_value);
+                    }
+                }
+
+                // Add X-Forwarded-* headers for backend visibility
+                if let Some(host_value) = original_host_header.clone() {
+                    req.headers_mut().insert("X-Forwarded-Host", host_value);
+                }
+
+                // X-Forwarded-Proto: scheme from original request
+                let original_scheme = req.uri().scheme_str().unwrap_or("http");
+                match original_scheme {
+                    "http" => {
+                        req.headers_mut().insert(
+                            "X-Forwarded-Proto",
+                            hyper::header::HeaderValue::from_static("http"),
+                        );
+                    }
+                    "https" => {
+                        req.headers_mut().insert(
+                            "X-Forwarded-Proto",
+                            hyper::header::HeaderValue::from_static("https"),
+                        );
+                    }
+                    _ => {}
+                }
+
+                // X-Forwarded-For: real client IP
+                if let Ok(ip_value) =
+                    hyper::header::HeaderValue::from_str(&remote_addr.ip().to_string())
+                {
+                    req.headers_mut().insert("X-Forwarded-For", ip_value);
+                }
+
+                // Remove hop-by-hop headers
+                req.headers_mut().remove(header::CONNECTION);
+                req.headers_mut().remove("accept-encoding");
+
+                // Forward request to backend with configurable timeout (default 30s)
+                let backend_timeout = read_timeout.unwrap_or(30);
+                match timeout(Duration::from_secs(backend_timeout), client.request(req)).await {
+                    Ok(Ok(response)) => {
+                        let status = response.status();
+                        let headers = response.headers().clone();
+
+                        // Stream response body directly (no buffering)
+                        let mut builder = Response::builder().status(status);
+
+                        // Copy headers, filtering hop-by-hop
+                        for (name, value) in headers.iter() {
+                            if !is_hop_header(name) && name != header::CONTENT_LENGTH {
+                                builder = builder.header(name, value);
+                            }
+                        }
+
+                        let (_, incoming_body) = response.into_parts();
+                        let boxed: ResponseBody = incoming_body
+                            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                            .boxed();
+
+                        let response = builder.header("X-Request-ID", &request_id).body(boxed)?;
+                        #[cfg(feature = "logging")]
+                        log_guard.finish(status.as_u16());
+                        Ok(response)
+                    }
+                    Ok(Err(e)) => {
+                        error!("Backend connection failed: {:?}", e);
+                        if e.is_connect() {
+                            error!("   Reason: Connection refused - backend unavailable");
+                        } else {
+                            error!("   Reason: Other connection error");
+                        }
+
+                        let (response, _body_len) = error_response_with_id(
+                            StatusCode::BAD_GATEWAY,
+                            "Backend service unavailable",
+                            &request_id,
+                        );
+                        #[cfg(feature = "logging")]
+                        {
+                            log_guard.set_bytes_sent(_body_len);
+                            log_guard.finish(502);
+                        }
+                        Ok(response)
+                    }
+                    Err(_) => {
+                        error!(
+                            "Backend request timed out after {} seconds",
+                            backend_timeout
+                        );
+
+                        let (response, _body_len) = error_response_with_id(
+                            StatusCode::GATEWAY_TIMEOUT,
+                            "Backend request timed out",
+                            &request_id,
+                        );
+                        #[cfg(feature = "logging")]
+                        {
+                            log_guard.set_bytes_sent(_body_len);
+                            log_guard.finish(504);
+                        }
+                        Ok(response)
+                    }
+                }
+            }
         }
     };
 
-    // Process directives in correct order
-    let action_result =
-        process_directives(&site_config.directives, &mut req, &path).map_err(anyhow::Error::msg)?;
+    #[cfg(feature = "logging")]
+    let future = future.instrument(span);
 
-    // Execute action
-    match action_result {
-        ActionResult::Redirect { status, url } => {
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::FOUND);
-            let boxed: ResponseBody = Full::new(Bytes::from(url.clone()))
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-                .boxed();
-            Ok(Response::builder()
-                .status(status_code)
-                .header("Location", &url)
-                .body(boxed)?)
-        }
-        ActionResult::Respond { status, body } => {
-            let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-            let boxed: ResponseBody = Full::new(Bytes::from(body))
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-                .boxed();
-            Ok(Response::builder().status(status_code).body(boxed)?)
-        }
-        ActionResult::ReverseProxy {
-            backend_url,
-            path_to_send,
-            connect_timeout: _,
-            read_timeout,
-        } => {
-            // Add protocol if missing
-            let backend_with_proto =
-                if backend_url.starts_with("http://") || backend_url.starts_with("https://") {
-                    backend_url
-                } else {
-                    format!("http://{}", backend_url)
-                };
-
-            // Use Uri::from_parts() instead of format!() + parse() - faster!
-            let mut parts = backend_with_proto.parse::<Uri>()?.into_parts();
-            parts.path_and_query = Some(path_to_send.parse()?);
-            let new_uri = Uri::from_parts(parts)?;
-
-            // Logging with enabled check to avoid string formatting when disabled
-            if tracing::enabled!(tracing::Level::INFO) {
-                // Removed info logging from hot path for performance
-                // Use DEBUG level if needed for troubleshooting
-            }
-
-            *req.uri_mut() = new_uri.clone();
-
-            // Save original host for X-Forwarded headers
-            // Clone HeaderValue directly - 0 allocations!
-            let original_host_header = req.headers().get(hyper::header::HOST).cloned();
-
-            // Update Host header for backend
-            req.headers_mut().remove(hyper::header::HOST);
-            if let Some(authority) = new_uri.authority() {
-                if let Ok(host_value) = authority.as_str().parse::<hyper::header::HeaderValue>() {
-                    req.headers_mut().insert(hyper::header::HOST, host_value);
-                }
-            }
-
-            // Add X-Forwarded-* headers for backend visibility
-            // X-Forwarded-Host: original Host header from client
-            if let Some(host_value) = original_host_header.clone() {
-                req.headers_mut().insert("X-Forwarded-Host", host_value);
-            }
-
-            // X-Forwarded-Proto: scheme from original request (http or https)
-            let original_scheme = req.uri().scheme_str().unwrap_or("http");
-            // Use from_static for known values - 0 allocations!
-            match original_scheme {
-                "http" => {
-                    req.headers_mut().insert(
-                        "X-Forwarded-Proto",
-                        hyper::header::HeaderValue::from_static("http"),
-                    );
-                }
-                "https" => {
-                    req.headers_mut().insert(
-                        "X-Forwarded-Proto",
-                        hyper::header::HeaderValue::from_static("https"),
-                    );
-                }
-                _ => {} // ignore unknown schemes
-            }
-
-            // X-Forwarded-For: real client IP from TCP connection
-            if let Ok(ip_value) =
-                hyper::header::HeaderValue::from_str(&remote_addr.ip().to_string())
-            {
-                req.headers_mut().insert("X-Forwarded-For", ip_value);
-            }
-
-            // Remove hop-by-hop headers from request before sending to backend
-            // Connection header must not be proxied (hyper manages connections)
-            req.headers_mut().remove(header::CONNECTION);
-
-            // Remove Accept-Encoding to prevent compression
-            // Compression breaks streaming and SSE
-            req.headers_mut().remove("accept-encoding");
-
-            // Forward request to backend with configurable timeout (default 30s)
-            let backend_timeout = read_timeout.unwrap_or(30);
-            match timeout(Duration::from_secs(backend_timeout), client.request(req)).await {
-                Ok(Ok(response)) => {
-                    // Successfully received response from backend
-                    let status = response.status();
-                    let headers = response.headers().clone();
-
-                    // Logging with enabled check to avoid string formatting when disabled
-                    if tracing::enabled!(tracing::Level::INFO) {
-                        // Removed info logging from hot path for performance
-                        // Use DEBUG level if needed for troubleshooting
-                    }
-
-                    // Stream response body directly (no buffering)
-                    let mut builder = Response::builder().status(status);
-
-                    // Copy all headers from backend, filtering out hop-by-hop headers
-                    // Hop-by-hop headers should not be proxied per RFC 7230
-                    // Also remove Content-Length to let hyper handle chunked encoding
-                    for (name, value) in headers.iter() {
-                        if !is_hop_header(name) && name != header::CONTENT_LENGTH {
-                            builder = builder.header(name, value);
-                        }
-                    }
-
-                    // Extract streaming body and convert to BoxBody
-                    let (_, incoming_body) = response.into_parts();
-                    let boxed: ResponseBody = incoming_body
-                        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
-                        .boxed();
-
-                    Ok(builder.body(boxed)?)
-                }
-                Ok(Err(e)) => {
-                    // Backend unavailable - return 502 Bad Gateway
-                    error!("Backend connection failed: {:?}", e);
-
-                    if e.is_connect() {
-                        error!("   Reason: Connection refused - backend unavailable");
-                    } else {
-                        error!("   Reason: Other connection error");
-                    }
-
-                    Ok(error_response(
-                        StatusCode::BAD_GATEWAY,
-                        "Backend service unavailable",
-                    ))
-                }
-                Err(_) => {
-                    // Timeout - return 504 Gateway Timeout
-                    error!(
-                        "Backend request timed out after {} seconds",
-                        backend_timeout
-                    );
-
-                    Ok(error_response(
-                        StatusCode::GATEWAY_TIMEOUT,
-                        "Backend request timed out",
-                    ))
-                }
-            }
-        }
-    }
+    future.await
 }
 
-/// Creates HTTP response with error
-fn error_response(status: StatusCode, message: &str) -> Response<ResponseBody> {
+/// Creates HTTP response with error and X-Request-ID header
+///
+/// Returns both the response and the body length (for access logging).
+fn error_response_with_id(
+    status: StatusCode,
+    message: &str,
+    request_id: &str,
+) -> (Response<ResponseBody>, usize) {
     let body = format!(
         r#"<!DOCTYPE html>
         <html>
@@ -359,16 +428,29 @@ fn error_response(status: StatusCode, message: &str) -> Response<ResponseBody> {
         message
     );
 
+    let body_len = body.len();
     let full = Full::new(Bytes::from(body));
     let boxed: ResponseBody = full
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
         .boxed();
 
-    Response::builder()
+    let mut builder = Response::builder()
         .status(status)
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(boxed)
-        .unwrap()
+        .header("Content-Type", "text/html; charset=utf-8");
+
+    if let Ok(val) = hyper::header::HeaderValue::from_str(request_id) {
+        builder = builder.header("X-Request-ID", val);
+    }
+
+    let response = builder.body(boxed).unwrap_or_else(|_| {
+        Response::new(
+            Full::new(Bytes::from("Internal Server Error"))
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                .boxed(),
+        )
+    });
+
+    (response, body_len)
 }
 
 /// Match path against pattern (supports wildcard *)
@@ -376,14 +458,13 @@ fn error_response(status: StatusCode, message: &str) -> Response<ResponseBody> {
 pub fn match_pattern(pattern: &str, path: &str) -> Option<String> {
     if let Some(prefix) = pattern.strip_suffix("/*") {
         if path.starts_with(prefix) {
-            // Remove prefix and return remaining path
             let remaining = path.strip_prefix(prefix).unwrap_or(path);
             Some(remaining.to_string())
         } else {
             None
         }
     } else if pattern == path {
-        Some("/".to_string()) // Exact match, send root
+        Some("/".to_string())
     } else {
         None
     }

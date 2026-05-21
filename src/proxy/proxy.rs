@@ -94,7 +94,7 @@ impl Proxy {
         http.set_nodelay(true);
         let https = HttpsConnectorBuilder::new()
             .with_native_roots()
-            .unwrap()
+            .expect("Failed to load native TLS root certificates")
             .https_or_http()
             .enable_http1()
             .wrap_connector(http);
@@ -139,7 +139,7 @@ impl Proxy {
         http.set_nodelay(true);
         let https = HttpsConnectorBuilder::new()
             .with_native_roots()
-            .unwrap()
+            .expect("Failed to load native TLS root certificates")
             .https_or_http()
             .enable_http1()
             .wrap_connector(http);
