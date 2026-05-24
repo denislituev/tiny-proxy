@@ -17,6 +17,7 @@ Lightweight, embeddable HTTP reverse proxy written in Rust with Caddy-like confi
 - **Header Manipulation**: Add, modify, or remove headers
 - **URI Rewriting**: Replace parts of request URIs
 - **HTTP/HTTPS Backend Support**: Full support for both HTTP and HTTPS backends
+- **TLS Termination**: HTTPS on the frontend with SNI-based multi-domain support
 - **Method-based Routing**: Different behavior for different HTTP methods
 - **Direct Responses**: Respond with custom status codes and bodies
 - **Authentication Module**: Token validation and header substitution
@@ -51,13 +52,21 @@ tiny-proxy = "0.3"
 Run as standalone server:
 
 ```bash
+# Auto-detect listeners from config (recommended)
+tiny-proxy --config config.caddy
+
+# Or specify a single listen address
 tiny-proxy --config config.caddy --addr 127.0.0.1:8080
 ```
 
 #### CLI Arguments
 
 - `--config, -c`: Path to configuration file (default: `./file.caddy`)
-- `--addr, -a`: Address to listen on (default: `127.0.0.1:8080`)
+- `--addr, -a`: Optional. Bind a **single** listener on this address (plain `start()`).
+  When omitted, **auto-detect mode** (`start_all()`): one listener per site address in config.
+  TLS sites → HTTPS with SNI; non-TLS → HTTP. In auto-detect mode only, each TLS port also
+  gets an HTTP→HTTPS redirect listener (`redirect_port = tls_port - 443 + 80`, e.g. 443→80,
+  8443→8080). With `--addr`, only the specified listener runs — **no** automatic redirect server.
 
 ### Library Mode
 
@@ -109,7 +118,13 @@ async fn main() -> anyhow::Result<()> {
 #### Hot-Reload Configuration
 
 Update configuration at runtime without restart. The proxy uses `Arc<RwLock<Config>>` internally,
-so any config change takes effect immediately for new connections:
+so routing and directive changes take effect immediately for new connections.
+
+> **TLS certificates**: cert/key files and `TlsAcceptor` are loaded when a listener starts.
+> Hot-reload updates site routing and directives, but **not** TLS certificates — to pick up
+> new certs or keys, restart the proxy (or the TLS listener).
+
+Example:
 
 ```rust
 use tiny_proxy::{Config, Proxy};
@@ -187,6 +202,45 @@ localhost:8080 {
 ```
 
 Timeout values support duration suffixes: `30s`, `5m`, `2h`, `1d`, or plain numbers (seconds).
+
+#### `tls`
+
+Enable HTTPS on the frontend with TLS termination. Specify paths to the certificate chain and private key (PEM format).
+
+```caddy
+# Single domain with TLS
+example.com:443 {
+    tls /etc/ssl/cert.pem /etc/ssl/key.pem
+    reverse_proxy backend:8080
+}
+
+# Multiple domains on port 443 (SNI-based routing)
+example.com:443 {
+    tls /etc/ssl/example.com/cert.pem /etc/ssl/example.com/key.pem
+    reverse_proxy backend:8080
+}
+
+api.example.com:443 {
+    tls /etc/ssl/api.example.com/cert.pem /etc/ssl/api.example.com/key.pem
+    reverse_proxy api-backend:3000
+}
+```
+
+**Auto-detect mode** (no `--addr`, uses `start_all()`):
+- One HTTPS listener per TLS site address, with SNI-based certificate selection
+- HTTP→HTTPS redirect per TLS port: `redirect_port = tls_port - 443 + 80` (443→80, 8443→8080)
+- Correct `X-Forwarded-Proto: https` sent to backends
+
+**Single-address mode** (`--addr`): only the given listener is started — no automatic redirect server.
+Use this when you bind one port manually; use auto-detect for full multi-site + redirect setup.
+
+> If the redirect port is already in use, HTTPS continues to work; redirect is skipped with a warning.
+
+> **Host header**: on default ports (443/80), browsers omit the port (`Host: example.com`).
+> On non-default TLS ports (e.g. 8443), browsers include it (`Host: example.com:8443`) — config
+> keys must match. See `find_site` docs in `handler.rs` for details.
+
+> **Known limitation**: TLS certs are loaded at listener startup; hot-reload does not reload them (see Hot-Reload above).
 
 #### `handle_path`
 
@@ -382,7 +436,11 @@ Enable CLI dependencies and `tiny-proxy` binary.
 
 #### `tls` (default)
 
-Enable HTTPS backend support using `hyper-rustls` (pure Rust TLS).
+Enable TLS support — both **frontend TLS termination** (HTTPS listeners) and **backend HTTPS** connections:
+
+- Frontend: `rustls` + `tokio-rustls` for HTTPS listeners with SNI-based routing
+- Backend: `hyper-rustls` for proxying to HTTPS backends
+- `rustls-pemfile` for loading PEM certificate chains and private keys
 
 #### `api` (default)
 
@@ -524,7 +582,7 @@ cargo run --example background
 - ⏳ Static file serving
 - ⏳ Try files (SPA support)
 - ⏳ Buffering control
-- ⏳ TLS/SSL support
+- ✅ TLS/SSL termination (SNI, multi-domain, HTTP→HTTPS redirect)
 - ⏳ WebSocket support
 - ⏳ Rate limiting
 - ✅ Structured access log with X-Request-ID (method, path, host, status, duration, bytes_sent)

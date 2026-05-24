@@ -5,5 +5,8 @@ pub mod handler;
 mod proxy;
 mod types;
 
+#[cfg(feature = "tls")]
+mod tls;
+
 pub use proxy::Proxy;
 pub use types::ActionResult;

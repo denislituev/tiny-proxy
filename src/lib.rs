@@ -88,6 +88,7 @@ pub mod api;
 
 // Re-export commonly used types for convenience
 pub use config::Config;
+pub use config::TlsConfig;
 pub use error::{ProxyError, Result};
 pub use proxy::{ActionResult, Proxy};
 

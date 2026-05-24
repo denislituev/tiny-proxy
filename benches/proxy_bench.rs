@@ -428,6 +428,7 @@ fn create_simple_config() -> Config {
                         read_timeout: None,
                     },
                 ],
+                tls: None,
             },
         )]),
     }
@@ -463,6 +464,7 @@ fn create_medium_config() -> Config {
                             read_timeout: None,
                         },
                     ],
+                    tls: None,
                 },
             ),
             (
@@ -474,6 +476,7 @@ fn create_medium_config() -> Config {
                         connect_timeout: None,
                         read_timeout: None,
                     }],
+                    tls: None,
                 },
             ),
         ]),
@@ -549,6 +552,7 @@ fn create_complex_config() -> Config {
                         }],
                     },
                 ],
+                tls: None,
             },
         )]),
     }
@@ -576,6 +580,7 @@ fn create_multi_site_config(count: usize) -> Config {
                         read_timeout: None,
                     },
                 ],
+                tls: None,
             },
         );
     }
