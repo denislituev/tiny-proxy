@@ -512,8 +512,7 @@ pub fn find_site<'a>(config: &'a Config, host: &str, is_tls: bool) -> Option<&'a
         // 3. TLS on a non-standard port — match by SNI hostname if unambiguous
         if is_tls {
             let mut matches = config.sites.values().filter(|s| {
-                s.tls.is_some()
-                    && extract_hostname(&s.address).eq_ignore_ascii_case(host)
+                s.tls.is_some() && extract_hostname(&s.address).eq_ignore_ascii_case(host)
             });
             if let Some(site) = matches.next() {
                 if matches.next().is_none() {

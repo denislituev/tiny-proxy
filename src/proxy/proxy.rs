@@ -284,10 +284,7 @@ impl Proxy {
             HashMap::new();
         for site in config_snapshot.sites.values() {
             let listen_addr = resolve_listen_addr(&site.address)?;
-            socket_groups
-                .entry(listen_addr)
-                .or_default()
-                .push(site);
+            socket_groups.entry(listen_addr).or_default().push(site);
         }
 
         let mut http_handles = Vec::new();
@@ -393,7 +390,9 @@ impl Proxy {
                     Err(e) => {
                         warn!(
                             "HTTP redirect on port {} failed (HTTPS on :{} still active): {}",
-                            redirect_addr.port(), tls_port, e
+                            redirect_addr.port(),
+                            tls_port,
+                            e
                         );
                     }
                 }

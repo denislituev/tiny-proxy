@@ -369,8 +369,8 @@ fn validate_listen_sockets(sites: &HashMap<String, SiteConfig>) -> Result<(), Pr
     let mut socket_sni: HashMap<SocketAddr, HashMap<String, String>> = HashMap::new();
 
     for site in sites.values() {
-        let listen_addr = resolve_listen_addr(&site.address)
-            .map_err(|e| ProxyError::Parse(e.to_string()))?;
+        let listen_addr =
+            resolve_listen_addr(&site.address).map_err(|e| ProxyError::Parse(e.to_string()))?;
         let is_tls = site.tls.is_some();
 
         if let Some(&prev_tls) = socket_tls.get(&listen_addr) {

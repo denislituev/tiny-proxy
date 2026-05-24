@@ -341,16 +341,14 @@ async fn plain_http_get(host: &str, port: u16, path: &str) -> (u16, Option<Strin
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
 
-    let location = response
-        .lines()
-        .find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            if name.eq_ignore_ascii_case("location") {
-                Some(value.trim().to_string())
-            } else {
-                None
-            }
-        });
+    let location = response.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        if name.eq_ignore_ascii_case("location") {
+            Some(value.trim().to_string())
+        } else {
+            None
+        }
+    });
 
     (status, location)
 }
@@ -452,8 +450,7 @@ async fn test_start_all_http_to_https_redirect() {
 
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-    let (status, location) =
-        plain_http_get("redirect.local", redirect_port, "/hello?x=1").await;
+    let (status, location) = plain_http_get("redirect.local", redirect_port, "/hello?x=1").await;
     assert_eq!(status, 301);
     let expected = format!("https://redirect.local:{}/hello?x=1", tls_port);
     assert_eq!(location.as_deref(), Some(expected.as_str()));
