@@ -1,4 +1,6 @@
+mod address;
 mod models;
 mod parser;
 
-pub use models::{Config, Directive, SiteConfig};
+pub use address::{extract_hostname, resolve_listen_addr, tls_redirect_port};
+pub use models::{Config, Directive, SiteConfig, TlsConfig};

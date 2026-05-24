@@ -1,0 +1,27 @@
+# TLS termination example
+#
+# Requires certificates (run once):
+#   mkdir -p examples/certs
+#   openssl req -x509 -newkey rsa:2048 \
+#     -keyout examples/certs/server.key \
+#     -out examples/certs/server.crt \
+#     -days 365 -nodes -subj "/CN=localhost"
+#
+# Run:
+#   cargo run --features tls --example tls
+#
+# Test:
+#   curl -k https://localhost:8443/health
+#   curl -k https://localhost:8443/users/123
+
+localhost:8443 {
+    tls examples/certs/server.crt examples/certs/server.key
+
+    handle_path /users/* {
+        reverse_proxy localhost:9001
+    }
+
+    handle_path /health {
+        respond 200 "OK"
+    }
+}

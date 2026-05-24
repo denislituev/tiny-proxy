@@ -8,9 +8,11 @@ pub struct Cli {
     #[arg(short, long, default_value = "./file.caddy")]
     pub config: String,
 
-    /// Address for proxy server to listen on
-    #[arg(short = 'a', long, default_value = "127.0.0.1:8080")]
-    pub addr: String,
+    /// Address for proxy server to listen on.
+    /// When omitted, auto-detects listeners from config (one per site address).
+    /// Use this to override when you want a single listener on a specific address.
+    #[arg(short = 'a', long)]
+    pub addr: Option<String>,
 
     /// Max concurrent connections (default: CPU cores * 256, use 0 for default)
     #[arg(long, default_value_t = 0)]

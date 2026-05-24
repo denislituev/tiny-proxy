@@ -3,7 +3,6 @@ use std::collections::HashMap;
 #[cfg(feature = "api")]
 use serde::{Deserialize, Serialize};
 
-// Models remain as same as we designed
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "api", derive(Serialize, Deserialize))]
 pub struct Config {
@@ -15,6 +14,17 @@ pub struct Config {
 pub struct SiteConfig {
     pub address: String,
     pub directives: Vec<Directive>,
+    /// TLS configuration for this site. When present, the site listens as HTTPS.
+    #[cfg_attr(feature = "api", serde(skip_serializing_if = "Option::is_none"))]
+    pub tls: Option<TlsConfig>,
+}
+
+/// TLS configuration for a site — paths to certificate chain and private key.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "api", derive(Serialize, Deserialize))]
+pub struct TlsConfig {
+    pub cert_path: String,
+    pub key_path: String,
 }
 
 #[derive(Debug, Clone)]

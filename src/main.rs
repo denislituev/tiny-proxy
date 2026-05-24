@@ -17,18 +17,15 @@ use tiny_proxy::Proxy;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .init();
 
-    // Parse CLI arguments
     let cli = Cli::parse();
 
     info!("Tiny Proxy Server v{}", env!("CARGO_PKG_VERSION"));
     info!("Loading config from: {}", cli.config);
 
-    // Load configuration
     let config = Config::from_file(&cli.config)?;
 
     #[cfg(feature = "api")]
@@ -53,25 +50,44 @@ async fn run_proxy_only(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
         proxy.set_max_concurrency(cli.max_concurrency);
     }
 
-    info!("Starting proxy server on {}", cli.addr);
-
     // Setup graceful shutdown
     let shutdown_signal = setup_shutdown_signal();
 
-    // Use tokio::select to wait for either proxy completion or shutdown signal
-    tokio::select! {
-        result = proxy.start(&cli.addr) => {
-            if let Err(e) = result {
-                error!("Proxy server error: {}", e);
-                Err(e)
-            } else {
+    if let Some(ref addr) = cli.addr {
+        // Explicit address → single listener
+        info!("Starting proxy server on {}", addr);
+        tokio::select! {
+            result = proxy.start(addr) => {
+                if let Err(e) = result {
+                    error!("Proxy server error: {}", e);
+                    Err(e)
+                } else {
+                    Ok(())
+                }
+            },
+            _ = shutdown_signal => {
+                info!("Shutdown signal received");
+                info!("Proxy server shutting down...");
                 Ok(())
             }
-        },
-        _ = shutdown_signal => {
-            info!("Shutdown signal received");
-            info!("Proxy server shutting down...");
-            Ok(())
+        }
+    } else {
+        // No address → auto-detect from config
+        info!("Auto-detecting listeners from config");
+        tokio::select! {
+            result = proxy.start_all() => {
+                if let Err(e) = result {
+                    error!("Proxy server error: {}", e);
+                    Err(e)
+                } else {
+                    Ok(())
+                }
+            },
+            _ = shutdown_signal => {
+                info!("Shutdown signal received");
+                info!("Proxy server shutting down...");
+                Ok(())
+            }
         }
     }
 }
@@ -85,7 +101,11 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
     // Create shutdown channel
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
-    info!("Starting proxy server on {}", cli.addr);
+    if let Some(ref addr) = cli.addr {
+        info!("Starting proxy server on {}", addr);
+    } else {
+        info!("Starting proxy server (auto-detect from config)");
+    }
     info!("Starting API server on {}", cli.api_addr);
 
     // Spawn API server task
@@ -184,7 +204,7 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
 /// Run proxy server with shared config and shutdown support
 #[cfg(feature = "api")]
 async fn run_proxy_server(
-    addr: String,
+    addr: Option<String>,
     max_concurrency: usize,
     shared_config: Arc<RwLock<Config>>,
     mut shutdown_rx: broadcast::Receiver<()>,
@@ -200,13 +220,25 @@ async fn run_proxy_server(
     }
 
     // Run proxy server
-    tokio::select! {
-        result = proxy.start(&addr) => {
-            result
-        },
-        _ = shutdown_rx.recv() => {
-            info!("Proxy server received shutdown signal");
-            Ok(())
+    if let Some(ref a) = addr {
+        tokio::select! {
+            result = proxy.start(a) => {
+                result
+            },
+            _ = shutdown_rx.recv() => {
+                info!("Proxy server received shutdown signal");
+                Ok(())
+            }
+        }
+    } else {
+        tokio::select! {
+            result = proxy.start_all() => {
+                result
+            },
+            _ = shutdown_rx.recv() => {
+                info!("Proxy server received shutdown signal");
+                Ok(())
+            }
         }
     }
 }

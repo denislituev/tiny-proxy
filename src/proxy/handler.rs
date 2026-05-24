@@ -16,7 +16,7 @@ use tracing::info_span;
 #[cfg(feature = "logging")]
 use tracing::Instrument;
 
-use crate::config::Config;
+use crate::config::{extract_hostname, Config, SiteConfig};
 #[cfg(feature = "logging")]
 use crate::proxy::access_log::AccessLogGuard;
 use crate::proxy::access_log::{ensure_request_id, final_request_id};
@@ -142,6 +142,7 @@ pub async fn proxy(
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
     config: Arc<Config>,
     remote_addr: std::net::SocketAddr,
+    is_tls: bool,
 ) -> Result<Response<ResponseBody>, Error> {
     // Generate or reuse request ID
     let initial_request_id = ensure_request_id(&mut req);
@@ -171,8 +172,10 @@ pub async fn proxy(
             host.clone(),
         );
 
-        // Find site configuration by host (with port!)
-        let site_config = match config.sites.get(&host) {
+        // Find site configuration by host
+        // Browsers send Host: example.com (no port) for default ports,
+        // but config keys may be "example.com:443". Try both.
+        let site_config = match find_site(&config, &host, is_tls) {
             Some(config) => config,
             None => {
                 error!("No configuration found for host: {}", host);
@@ -297,23 +300,11 @@ pub async fn proxy(
                     req.headers_mut().insert("X-Forwarded-Host", host_value);
                 }
 
-                // X-Forwarded-Proto: scheme from original request
-                let original_scheme = req.uri().scheme_str().unwrap_or("http");
-                match original_scheme {
-                    "http" => {
-                        req.headers_mut().insert(
-                            "X-Forwarded-Proto",
-                            hyper::header::HeaderValue::from_static("http"),
-                        );
-                    }
-                    "https" => {
-                        req.headers_mut().insert(
-                            "X-Forwarded-Proto",
-                            hyper::header::HeaderValue::from_static("https"),
-                        );
-                    }
-                    _ => {}
-                }
+                // X-Forwarded-Proto: based on whether the connection is TLS
+                req.headers_mut().insert(
+                    "X-Forwarded-Proto",
+                    hyper::header::HeaderValue::from_static(if is_tls { "https" } else { "http" }),
+                );
 
                 // X-Forwarded-For: real client IP
                 if let Ok(ip_value) =
@@ -467,5 +458,170 @@ pub fn match_pattern(pattern: &str, path: &str) -> Option<String> {
         Some("/".to_string())
     } else {
         None
+    }
+}
+
+/// Find a site configuration matching the given Host header value.
+///
+/// Browsers on default ports omit the port from the Host header:
+/// - HTTPS on 443 → `Host: example.com` (no `:443`)
+/// - HTTP on 80 → `Host: example.com` (no `:80`)
+///
+/// But config keys include the port: `"example.com:443"`, `"example.com:80"`.
+///
+/// This function tries multiple lookup strategies:
+/// 1. Exact match: `host` as-is
+/// 2. If `host` has no port → try `host:<default_port>` based on `is_tls`
+/// 3. If `host` has a port → also try just the hostname (in case config has no port)
+///
+/// # Limitations
+///
+/// For non-default TLS ports (e.g., 8443), browsers always include the port
+/// in the `Host` header (`Host: example.com:8443`), so strategy 1 (exact match)
+/// works fine. The fallback in strategy 2 only tries ports 443 (TLS) and 80 (HTTP).
+/// This means a non-browser client sending `Host: example.com` without a port to
+/// a TLS listener on :8443 will get a 404 — this is a protocol violation by the client.
+pub fn find_site<'a>(config: &'a Config, host: &str, is_tls: bool) -> Option<&'a SiteConfig> {
+    // 1. Exact match
+    if let Some(site) = config.sites.get(host) {
+        return Some(site);
+    }
+
+    // Determine if host already contains a port
+    // IPv6: [::1]:8080 — port is after the last ']' + ':'
+    // IPv4/hostname: example.com:443
+    let has_port = if host.starts_with('[') {
+        // IPv6 — look for port after ']'
+        if let Some(bracket_end) = host.find(']') {
+            host[bracket_end..].contains(':')
+        } else {
+            false
+        }
+    } else {
+        host.contains(':')
+    };
+
+    if !has_port {
+        // 2. Host has no port — try appending the default port
+        let default_port = if is_tls { 443 } else { 80 };
+        let candidate = format!("{}:{}", host, default_port);
+        if let Some(site) = config.sites.get(&candidate) {
+            return Some(site);
+        }
+
+        // 3. TLS on a non-standard port — match by SNI hostname if unambiguous
+        if is_tls {
+            let mut matches = config.sites.values().filter(|s| {
+                s.tls.is_some() && extract_hostname(&s.address).eq_ignore_ascii_case(host)
+            });
+            if let Some(site) = matches.next() {
+                if matches.next().is_none() {
+                    return Some(site);
+                }
+            }
+        }
+    } else {
+        // 4. Host has a port — try just the hostname (strip port)
+        let hostname = if host.starts_with('[') {
+            // IPv6 [::1]:port → ::1
+            let end = host.find(']').unwrap_or(host.len());
+            host[1..end].to_string()
+        } else {
+            host.rsplit(':').next_back().unwrap_or(host).to_string()
+        };
+        if let Some(site) = config.sites.get(&hostname) {
+            return Some(site);
+        }
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod find_site_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_config(sites: Vec<(&str, bool)>) -> Config {
+        let mut map = HashMap::new();
+        for (addr, has_tls) in sites {
+            map.insert(
+                addr.to_string(),
+                crate::config::SiteConfig {
+                    address: addr.to_string(),
+                    directives: vec![],
+                    tls: if has_tls {
+                        Some(crate::config::TlsConfig {
+                            cert_path: "/fake/cert.pem".to_string(),
+                            key_path: "/fake/key.pem".to_string(),
+                        })
+                    } else {
+                        None
+                    },
+                },
+            );
+        }
+        Config { sites: map }
+    }
+
+    #[test]
+    fn test_exact_match() {
+        let config = make_config(vec![("example.com:443", true)]);
+        assert!(find_site(&config, "example.com:443", true).is_some());
+    }
+
+    #[test]
+    fn test_tls_host_without_port_finds_443() {
+        let config = make_config(vec![("example.com:443", true)]);
+        // Browser sends Host: example.com (no :443) on HTTPS
+        assert!(
+            find_site(&config, "example.com", true).is_some(),
+            "Should find example.com:443 when Host has no port and is_tls=true"
+        );
+    }
+
+    #[test]
+    fn test_http_host_without_port_finds_80() {
+        let config = make_config(vec![("example.com:80", false)]);
+        // Browser sends Host: example.com (no :80) on HTTP
+        assert!(
+            find_site(&config, "example.com", false).is_some(),
+            "Should find example.com:80 when Host has no port and is_tls=false"
+        );
+    }
+
+    #[test]
+    fn test_tls_host_without_port_no_match_on_80() {
+        let config = make_config(vec![("example.com:80", false)]);
+        // Host: example.com on TLS should NOT match :80
+        assert!(
+            find_site(&config, "example.com", true).is_none(),
+            "TLS on port 443 should not find :80 site"
+        );
+    }
+
+    #[test]
+    fn test_host_with_port_strips_port_fallback() {
+        let config = make_config(vec![("example.com", false)]);
+        // Config has "example.com" (no port), Host has "example.com:8080"
+        assert!(
+            find_site(&config, "example.com:8080", false).is_some(),
+            "Should strip port from Host and find config without port"
+        );
+    }
+
+    #[test]
+    fn test_tls_host_without_port_finds_non_standard_port() {
+        let config = make_config(vec![("alpha.local:8443", true)]);
+        assert!(
+            find_site(&config, "alpha.local", true).is_some(),
+            "Should find alpha.local:8443 when Host has no port on TLS"
+        );
+    }
+
+    #[test]
+    fn test_no_match() {
+        let config = make_config(vec![("other.com:443", true)]);
+        assert!(find_site(&config, "example.com", true).is_none());
     }
 }

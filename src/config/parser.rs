@@ -1,6 +1,8 @@
+use crate::config::address::{extract_hostname, resolve_listen_addr};
 use crate::config::{Config, Directive, SiteConfig};
 use crate::error::ProxyError;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::str::FromStr;
 
 #[derive(Debug)]
@@ -67,6 +69,7 @@ impl FromStr for Config {
     fn from_str(content: &str) -> Result<Self, Self::Err> {
         let mut sites = HashMap::new();
         let mut current_site_address: Option<String> = None;
+        let mut current_site_tls: Option<crate::config::TlsConfig> = None;
 
         let mut directive_stack: Vec<Vec<Directive>> = vec![vec![]];
         let mut block_stack: Vec<PendingBlock> = vec![];
@@ -155,11 +158,19 @@ impl FromStr for Config {
                         let site_directives = directive_stack
                             .pop()
                             .expect("site directive_stack is non-empty");
+                        if sites.contains_key(&address) {
+                            return Err(ProxyError::Parse(format!(
+                                "Duplicate site address '{}'. \
+                                 Each address may appear only once in the configuration.",
+                                address
+                            )));
+                        }
                         sites.insert(
                             address.clone(),
                             SiteConfig {
                                 address,
                                 directives: site_directives,
+                                tls: current_site_tls.take(),
                             },
                         );
                         directive_stack.push(vec![]);
@@ -215,6 +226,33 @@ impl FromStr for Config {
                         }
                     }
                 }
+            }
+
+            // Special handling: tls directive at site level
+            if directive_name == "tls" && block_stack.is_empty() {
+                let cert_path = args.first().cloned().ok_or_else(|| {
+                    ProxyError::Parse(format!(
+                        "Missing cert path for tls directive on line {}",
+                        line_num + 1
+                    ))
+                })?;
+                let key_path = args.get(1).cloned().ok_or_else(|| {
+                    ProxyError::Parse(format!(
+                        "Missing key path for tls directive on line {}",
+                        line_num + 1
+                    ))
+                })?;
+                if current_site_tls.is_some() {
+                    return Err(ProxyError::Parse(format!(
+                        "Duplicate tls directive on line {}. Only one tls per site is allowed.",
+                        line_num + 1
+                    )));
+                }
+                current_site_tls = Some(crate::config::TlsConfig {
+                    cert_path: cert_path.to_string(),
+                    key_path: key_path.to_string(),
+                });
+                continue;
             }
 
             // Regular directive parsing
@@ -319,8 +357,50 @@ impl FromStr for Config {
                 .push(directive);
         }
 
+        validate_listen_sockets(&sites)?;
+
         Ok(Config { sites })
     }
+}
+
+/// Validate TLS/plain consistency and unique SNI hostnames per listen socket.
+fn validate_listen_sockets(sites: &HashMap<String, SiteConfig>) -> Result<(), ProxyError> {
+    let mut socket_tls: HashMap<SocketAddr, bool> = HashMap::new();
+    let mut socket_sni: HashMap<SocketAddr, HashMap<String, String>> = HashMap::new();
+
+    for site in sites.values() {
+        let listen_addr =
+            resolve_listen_addr(&site.address).map_err(|e| ProxyError::Parse(e.to_string()))?;
+        let is_tls = site.tls.is_some();
+
+        if let Some(&prev_tls) = socket_tls.get(&listen_addr) {
+            if prev_tls != is_tls {
+                return Err(ProxyError::Parse(format!(
+                    "Mixed TLS and non-TLS sites on the same listen address {} is not supported. \
+                     Site '{}' is {} but conflicts with another site on this socket.",
+                    listen_addr,
+                    site.address,
+                    if is_tls { "TLS" } else { "plain HTTP" }
+                )));
+            }
+        } else {
+            socket_tls.insert(listen_addr, is_tls);
+        }
+
+        if is_tls {
+            let sni = extract_hostname(&site.address).to_ascii_lowercase();
+            let sni_map = socket_sni.entry(listen_addr).or_default();
+            if let Some(existing) = sni_map.get(&sni) {
+                return Err(ProxyError::Parse(format!(
+                    "Duplicate SNI hostname '{}' on listen address {} (sites '{}' and '{}')",
+                    sni, listen_addr, existing, site.address
+                )));
+            }
+            sni_map.insert(sni, site.address.clone());
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -436,5 +516,137 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("Unexpected directive"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_tls_directive() {
+        let config = r#"example.com:443 {
+    tls /etc/ssl/cert.pem /etc/ssl/key.pem
+    reverse_proxy backend:8080
+}"#;
+        let result: Config = config.parse().unwrap();
+        let site = result.sites.get("example.com:443").unwrap();
+
+        assert!(site.tls.is_some());
+        let tls = site.tls.as_ref().unwrap();
+        assert_eq!(tls.cert_path, "/etc/ssl/cert.pem");
+        assert_eq!(tls.key_path, "/etc/ssl/key.pem");
+
+        assert_eq!(site.directives.len(), 1);
+        match &site.directives[0] {
+            Directive::ReverseProxy { to, .. } => {
+                assert_eq!(to, "backend:8080");
+            }
+            _ => panic!("Expected ReverseProxy directive"),
+        }
+    }
+
+    #[test]
+    fn test_parse_tls_missing_cert_path() {
+        let config = "example.com:443 {\n    tls\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("Missing cert path"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_tls_missing_key_path() {
+        let config = "example.com:443 {\n    tls /etc/ssl/cert.pem\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("Missing key path"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_tls_duplicate_rejected() {
+        let config = r#"example.com:443 {
+    tls /a/cert.pem /a/key.pem
+    tls /b/cert.pem /b/key.pem
+    reverse_proxy backend:8080
+}"#;
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("Duplicate tls"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_mixed_tls_and_non_tls_sites() {
+        let config = r#"localhost:8080 {
+    reverse_proxy backend:3000
+}
+example.com:443 {
+    tls /etc/ssl/cert.pem /etc/ssl/key.pem
+    reverse_proxy backend:8080
+}"#;
+        let result: Config = config.parse().unwrap();
+
+        // HTTP site
+        let http_site = result.sites.get("localhost:8080").unwrap();
+        assert!(http_site.tls.is_none());
+
+        // HTTPS site
+        let https_site = result.sites.get("example.com:443").unwrap();
+        assert!(https_site.tls.is_some());
+    }
+
+    #[test]
+    fn test_parse_duplicate_address_rejected() {
+        let config = r#"example.com:443 {
+    tls /a/cert.pem /a/key.pem
+    reverse_proxy backend:8080
+}
+example.com:443 {
+    reverse_proxy backend:9000
+}"#;
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Duplicate site address"),
+            "Expected 'Duplicate site address' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_parse_mixed_tls_on_same_listen_socket_rejected() {
+        let config = r#"example.com:443 {
+    tls /etc/ssl/cert.pem /etc/ssl/key.pem
+    reverse_proxy backend:8080
+}
+0.0.0.0:443 {
+    reverse_proxy backend:3000
+}"#;
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Mixed TLS and non-TLS"),
+            "got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_parse_duplicate_sni_on_same_listen_socket_rejected() {
+        let config = r#"Example.com:8443 {
+    tls /a/cert.pem /a/key.pem
+    respond 200 "A"
+}
+example.com:8443 {
+    tls /b/cert.pem /b/key.pem
+    respond 200 "B"
+}"#;
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("Duplicate SNI hostname"),
+            "got: {}",
+            err_msg
+        );
     }
 }
