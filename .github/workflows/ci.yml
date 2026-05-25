@@ -71,6 +71,27 @@ jobs:
           path: target/release/tiny-proxy
           if-no-files-found: error
 
+  security:
+    name: Security (deny + audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: cargo deny check
+        run: cargo deny check
+
+      - name: cargo audit
+        run: cargo audit --deny warnings
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest
