@@ -24,3 +24,4 @@ ex/
 docs/
 .env
 .DS_Store
+certs/

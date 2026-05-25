@@ -1,0 +1,24 @@
+# tiny-proxy configuration for docker-compose example
+#
+# HTTPS site on :8443 with TLS termination
+# HTTP redirect on :8080 (automatic: 8443 - 443 + 80 = 8080)
+#
+# Generate self-signed certs:
+#   mkdir -p certs
+#   openssl req -x509 -newkey rsa:2048 \
+#     -keyout certs/key.pem -out certs/cert.pem \
+#     -days 365 -nodes -subj "/CN=localhost"
+
+localhost:8443 {
+    tls /etc/ssl/tiny-proxy/cert.pem /etc/ssl/tiny-proxy/key.pem
+
+    handle_path /users/* {
+        reverse_proxy backend-users:8080
+    }
+    handle_path /orders/* {
+        reverse_proxy backend-orders:8080
+    }
+    handle_path /health {
+        respond 200 "OK"
+    }
+}
