@@ -1,0 +1,44 @@
+# Example stack: tiny-proxy (TLS + HTTP→HTTPS redirect) with internal echo backends.
+#
+# Backends are reachable only inside the compose network (no host ports).
+# Config: config.caddy — HTTPS :8443, redirect :8080 (8443 - 443 + 80).
+#
+# Usage:
+#   mkdir -p certs
+#   openssl req -x509 -newkey rsa:2048 \
+#     -keyout certs/key.pem -out certs/cert.pem \
+#     -days 365 -nodes -subj "/CN=localhost"
+#   docker compose up --build
+#
+# Test:
+#   curl -k https://localhost:8443/health
+#   curl -k https://localhost:8443/users/123
+#   curl -k https://localhost:8443/orders/456
+#   curl -sI http://localhost:8080/health   # 301 → https://localhost:8443/health
+
+services:
+  proxy:
+    build: .
+    ports:
+      - "8443:8443" # HTTPS (TLS termination)
+      - "8080:8080" # HTTP → HTTPS redirect
+    volumes:
+      - ./config.caddy:/etc/tiny-proxy/config.caddy:ro
+      - ./certs:/etc/ssl/tiny-proxy:ro
+    depends_on:
+      backend-users:
+        condition: service_started
+      backend-orders:
+        condition: service_started
+
+  backend-users:
+    image: hashicorp/http-echo
+    command: ["-text=Hello from User Service", "-listen=:8080"]
+    expose:
+      - "8080"
+
+  backend-orders:
+    image: hashicorp/http-echo
+    command: ["-text=Hello from Order Service", "-listen=:8080"]
+    expose:
+      - "8080"

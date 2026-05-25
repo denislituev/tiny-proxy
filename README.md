@@ -45,6 +45,52 @@ Add to your `Cargo.toml`:
 tiny-proxy = "0.3"
 ```
 
+## Docker
+
+### Quick Start
+
+```bash
+# Pull from GitHub Container Registry
+docker pull ghcr.io/denislituev/tiny-proxy:latest
+
+# Run with a local config
+docker run -d \
+  -p 8080:8080 \
+  -v $(pwd)/config.caddy:/etc/tiny-proxy/config.caddy:ro \
+  ghcr.io/denislituev/tiny-proxy:latest
+
+# With TLS
+docker run -d \
+  -p 8443:8443 \
+  -v $(pwd)/config.caddy:/etc/tiny-proxy/config.caddy:ro \
+  -v $(pwd)/certs:/etc/ssl/tiny-proxy:ro \
+  ghcr.io/denislituev/tiny-proxy:latest
+```
+
+### Docker Compose
+
+```yaml
+services:
+  proxy:
+    image: ghcr.io/denislituev/tiny-proxy:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.caddy:/etc/tiny-proxy/config.caddy:ro
+```
+
+See [`docker-compose.yml`](docker-compose.yml) for a full example with TLS + echo backends.
+
+### Build from Source
+
+```bash
+git clone https://github.com/denislituev/tiny-proxy.git
+cd tiny-proxy
+docker build -t tiny-proxy .
+```
+
+The image is based on Alpine Linux with CA certificates (~7 MB), so HTTPS backends work out of the box.
+
 ## Usage
 
 ### CLI Mode

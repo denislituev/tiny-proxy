@@ -1,0 +1,9 @@
+target/
+.git/
+.idea/
+.vscode/
+ex/
+docs/
+tests/
+.DS_Store
+.env
