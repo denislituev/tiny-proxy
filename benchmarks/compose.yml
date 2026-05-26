@@ -1,0 +1,66 @@
+# Benchmark: tiny-proxy vs nginx vs Caddy
+#
+# 3 equivalent reverse proxies → same backend → measure proxy overhead
+#
+# Ports:
+#   9001  backend (http-echo, plain text "Hello World")
+#   9002  backend-json (http-echo, JSON response ~200 bytes)
+#   8080  tiny-proxy
+#   8081  nginx
+#   8082  Caddy
+#   8443  tiny-proxy (TLS)
+#   8444  nginx (TLS)
+#   8445  Caddy (TLS)
+
+services:
+  backend:
+    image: hashicorp/http-echo
+    command: ["-text=Hello World", "-listen=:9000"]
+    expose:
+      - "9000"
+
+  backend-json:
+    image: hashicorp/http-echo
+    command: ["-text={\"status\":\"ok\",\"items\":[1,2,3,4,5,6,7,8,9,10],\"page\":1,\"total\":100}", "-listen=:9000"]
+    expose:
+      - "9000"
+
+  # --- Proxies (HTTP) ---
+
+  tiny-proxy:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "8443:8443"
+    volumes:
+      - ./proxies/tiny-proxy.caddy:/etc/tiny-proxy/config.caddy:ro
+      - ./certs:/etc/ssl/tiny-proxy:ro
+    depends_on:
+      - backend
+      - backend-json
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8081:80"
+      - "8444:443"
+    volumes:
+      - ./proxies/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/ssl/bench:ro
+    depends_on:
+      - backend
+      - backend-json
+
+  caddy:
+    image: caddy:alpine
+    ports:
+      - "8082:8082"
+      - "8445:8445"
+    volumes:
+      - ./proxies/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/etc/ssl/bench:ro
+    depends_on:
+      - backend
+      - backend-json

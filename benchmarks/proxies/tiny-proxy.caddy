@@ -1,0 +1,18 @@
+localhost:8080 {
+    handle_path /text/* {
+        reverse_proxy backend:9000
+    }
+    handle_path /json/* {
+        reverse_proxy backend-json:9000
+    }
+}
+
+localhost:8443 {
+    tls /etc/ssl/tiny-proxy/cert.pem /etc/ssl/tiny-proxy/key.pem
+    handle_path /text/* {
+        reverse_proxy backend:9000
+    }
+    handle_path /json/* {
+        reverse_proxy backend-json:9000
+    }
+}

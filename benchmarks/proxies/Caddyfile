@@ -1,0 +1,10 @@
+:8082 {
+	reverse_proxy /text/* backend:9000
+	reverse_proxy /json/* backend-json:9000
+}
+
+:8445 {
+	tls /etc/ssl/bench/cert.pem /etc/ssl/bench/key.pem
+	reverse_proxy /text/* backend:9000
+	reverse_proxy /json/* backend-json:9000
+}
