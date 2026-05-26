@@ -40,4 +40,4 @@ VOLUME /etc/tiny-proxy
 VOLUME /etc/ssl/tiny-proxy
 
 ENTRYPOINT ["tiny-proxy"]
-CMD ["-c", "/etc/tiny-proxy/config.caddy"]
+CMD ["-c", "/etc/tiny-proxy/config.conf"]

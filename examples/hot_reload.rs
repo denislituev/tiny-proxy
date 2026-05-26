@@ -12,7 +12,7 @@
 //! cargo run --example hot_reload
 //! ```
 //!
-//! Then edit file.caddy while the proxy is running to see hot-reload in action.
+//! Then edit file.conf while the proxy is running to see hot-reload in action.
 
 use tiny_proxy::{Config, Proxy};
 use tokio::time::{sleep, Duration};
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting tiny-proxy hot-reload example");
 
-    let config_path = "file.caddy";
+    let config_path = "file.conf";
 
     // Load initial configuration from file
     let config = Config::from_file(config_path)?;

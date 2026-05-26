@@ -5,7 +5,7 @@ use clap::Parser;
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     /// Path to configuration file (Caddy-like format)
-    #[arg(short, long, default_value = "./file.caddy")]
+    #[arg(short, long, default_value = "./file.conf")]
     pub config: String,
 
     /// Address for proxy server to listen on.

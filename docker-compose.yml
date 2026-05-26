@@ -1,7 +1,7 @@
 # Example stack: tiny-proxy (TLS + HTTP→HTTPS redirect) with internal echo backends.
 #
 # Backends are reachable only inside the compose network (no host ports).
-# Config: config.caddy — HTTPS :8443, redirect :8080 (8443 - 443 + 80).
+# Config: config.conf — HTTPS :8443, redirect :8080 (8443 - 443 + 80).
 #
 # Usage:
 #   mkdir -p certs
@@ -23,7 +23,7 @@ services:
       - "8443:8443" # HTTPS (TLS termination)
       - "8080:8080" # HTTP → HTTPS redirect
     volumes:
-      - ./config.caddy:/etc/tiny-proxy/config.caddy:ro
+      - ./config.conf:/etc/tiny-proxy/config.conf:ro
       - ./certs:/etc/ssl/tiny-proxy:ro
     depends_on:
       backend-users:

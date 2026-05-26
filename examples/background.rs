@@ -27,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting tiny-proxy background example");
 
     // Load configuration from file
-    let config = Config::from_file("file.caddy")?;
+    let config = Config::from_file("file.conf")?;
 
     info!("Loaded configuration for {} site(s)", config.sites.len());
 

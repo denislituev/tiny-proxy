@@ -13,7 +13,7 @@
 //!
 //! # #[tokio::main]
 //! # async fn main() -> anyhow::Result<()> {
-//! let config = Arc::new(RwLock::new(Config::from_file("config.caddy")?));
+//! let config = Arc::new(RwLock::new(Config::from_file("config.conf")?));
 //!
 //! // Start the management API server
 //! api::start_api_server("127.0.0.1:8081", config).await?;

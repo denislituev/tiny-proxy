@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Starting tiny-proxy TLS example");
 
-    let config = Config::from_file("examples/tls.caddy")?;
+    let config = Config::from_file("examples/tls.conf")?;
     info!("Loaded configuration for {} site(s)", config.sites.len());
 
     let proxy = Proxy::new(config);

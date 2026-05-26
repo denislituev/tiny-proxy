@@ -33,7 +33,7 @@ cargo install --path .
 
 # Or build and run directly
 cargo build --release
-./target/release/tiny-proxy --config config.caddy
+./target/release/tiny-proxy --config config.conf
 ```
 
 ### As Library
@@ -56,13 +56,13 @@ docker pull ghcr.io/denislituev/tiny-proxy:latest
 # Run with a local config
 docker run -d \
   -p 8080:8080 \
-  -v $(pwd)/config.caddy:/etc/tiny-proxy/config.caddy:ro \
+  -v $(pwd)/config.conf:/etc/tiny-proxy/config.conf:ro \
   ghcr.io/denislituev/tiny-proxy:latest
 
 # With TLS
 docker run -d \
   -p 8443:8443 \
-  -v $(pwd)/config.caddy:/etc/tiny-proxy/config.caddy:ro \
+  -v $(pwd)/config.conf:/etc/tiny-proxy/config.conf:ro \
   -v $(pwd)/certs:/etc/ssl/tiny-proxy:ro \
   ghcr.io/denislituev/tiny-proxy:latest
 ```
@@ -76,7 +76,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./config.caddy:/etc/tiny-proxy/config.caddy:ro
+      - ./config.conf:/etc/tiny-proxy/config.conf:ro
 ```
 
 See [`docker-compose.yml`](docker-compose.yml) for a full example with TLS + echo backends.
@@ -99,15 +99,15 @@ Run as standalone server:
 
 ```bash
 # Auto-detect listeners from config (recommended)
-tiny-proxy --config config.caddy
+tiny-proxy --config config.conf
 
 # Or specify a single listen address
-tiny-proxy --config config.caddy --addr 127.0.0.1:8080
+tiny-proxy --config config.conf --addr 127.0.0.1:8080
 ```
 
 #### CLI Arguments
 
-- `--config, -c`: Path to configuration file (default: `./file.caddy`)
+- `--config, -c`: Path to configuration file (default: `./file.conf`)
 - `--addr, -a`: Optional. Bind a **single** listener on this address (plain `start()`).
   When omitted, **auto-detect mode** (`start_all()`): one listener per site address in config.
   TLS sites → HTTPS with SNI; non-TLS → HTTP. In auto-detect mode only, each TLS port also
@@ -124,7 +124,7 @@ use tiny_proxy::{Config, Proxy};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load configuration from file
-    let config = Config::from_file("config.caddy")?;
+    let config = Config::from_file("config.conf")?;
     
     // Create and start proxy
     let proxy = Proxy::new(config);
@@ -144,7 +144,7 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::from_file("config.caddy")?;
+    let config = Config::from_file("config.conf")?;
     let proxy = Arc::new(Proxy::new(config));
     
     // Spawn proxy in background
@@ -179,7 +179,7 @@ use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::from_file("config.caddy")?;
+    let config = Config::from_file("config.conf")?;
     let proxy = Proxy::new(config);
 
     // Get shared config handle for hot-reload
@@ -193,7 +193,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Update config at runtime — takes effect immediately
-    let new_config = Config::from_file("new-config.caddy")?;
+    let new_config = Config::from_file("new-config.conf")?;
     {
         let mut guard = config_handle.write().await;
         *guard = new_config;
@@ -207,7 +207,7 @@ async fn main() -> anyhow::Result<()> {
 Or use the built-in `update_config` method:
 
 ```rust
-let new_config = Config::from_file("updated-config.caddy")?;
+let new_config = Config::from_file("updated-config.conf")?;
 proxy.update_config(new_config).await;
 ```
 
@@ -497,7 +497,7 @@ use tiny_proxy::api;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-let config = Arc::new(RwLock::new(Config::from_file("config.caddy")?));
+let config = Arc::new(RwLock::new(Config::from_file("config.conf")?));
 api::start_api_server("127.0.0.1:8081", config).await?;
 ```
 

@@ -32,7 +32,7 @@ use crate::proxy::handler::proxy;
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
-///     let config = Config::from_file("file.caddy")?;
+///     let config = Config::from_file("file.conf")?;
 ///     let proxy = Proxy::new(config);
 ///     proxy.start("127.0.0.1:8080").await?;
 ///     Ok(())
@@ -48,7 +48,7 @@ use crate::proxy::handler::proxy;
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
-///     let config = Config::from_file("config.caddy")?;
+///     let config = Config::from_file("config.conf")?;
 ///     let proxy = Proxy::new(config);
 ///
 ///     // Get a handle to the shared config for hot-reload
@@ -62,7 +62,7 @@ use crate::proxy::handler::proxy;
 ///     });
 ///
 ///     // Later, update config at runtime
-///     let new_config = Config::from_file("updated-config.caddy")?;
+///     let new_config = Config::from_file("updated-config.conf")?;
 ///     {
 ///         let mut guard = config_handle.write().await;
 ///         *guard = new_config;
@@ -193,7 +193,7 @@ impl Proxy {
     /// # use tiny_proxy::{Config, Proxy};
     /// # #[tokio::main]
     /// # async fn main() -> anyhow::Result<()> {
-    /// # let config = Config::from_file("config.caddy")?;
+    /// # let config = Config::from_file("config.conf")?;
     /// # let proxy = Proxy::new(config);
     /// proxy.start("127.0.0.1:8080").await?;
     /// # Ok(())
@@ -270,7 +270,7 @@ impl Proxy {
     /// # use tiny_proxy::{Config, Proxy};
     /// # #[tokio::main]
     /// # async fn main() -> anyhow::Result<()> {
-    /// # let config = Config::from_file("config.caddy")?;
+    /// # let config = Config::from_file("config.conf")?;
     /// # let proxy = std::sync::Arc::new(Proxy::new(config));
     /// proxy.start_all().await?;
     /// # Ok(())
