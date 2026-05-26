@@ -35,7 +35,7 @@ services:
       - "8080:8080"
       - "8443:8443"
     volumes:
-      - ./proxies/tiny-proxy.caddy:/etc/tiny-proxy/config.caddy:ro
+      - ./proxies/tiny-proxy.conf:/etc/tiny-proxy/config.conf:ro
       - ./certs:/etc/ssl/tiny-proxy:ro
     depends_on:
       - backend

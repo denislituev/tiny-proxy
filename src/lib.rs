@@ -19,7 +19,7 @@
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
 //!     // Load configuration from file
-//!     let config = Config::from_file("config.caddy")?;
+//!     let config = Config::from_file("config.conf")?;
 //!
 //!     // Create and start proxy
 //!     let proxy = Proxy::new(config);
@@ -38,7 +38,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
-//!     let config = Config::from_file("config.caddy")?;
+//!     let config = Config::from_file("config.conf")?;
 //!     let proxy = Proxy::new(config);
 //!
 //!     // Spawn proxy in background
@@ -60,7 +60,7 @@
 //! When built as a binary, the proxy can be run from command line:
 //!
 //! ```bash
-//! tiny-proxy --config config.caddy --addr 127.0.0.1:8080
+//! tiny-proxy --config config.conf --addr 127.0.0.1:8080
 //! ```
 //!
 //! ## Configuration Format

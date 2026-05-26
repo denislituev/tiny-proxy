@@ -24,8 +24,8 @@ async fn main() -> anyhow::Result<()> {
     info!("Starting tiny-proxy library example");
 
     // Load configuration from file
-    // Make sure file.caddy exists in the project root or provide a different path
-    let config = Config::from_file("file.caddy")?;
+    // Make sure file.conf exists in the project root or provide a different path
+    let config = Config::from_file("file.conf")?;
 
     info!("Loaded configuration for {} site(s)", config.sites.len());
 
