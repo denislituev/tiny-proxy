@@ -42,7 +42,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tiny-proxy = "0.3"
+tiny-proxy = "0.4"
 ```
 
 ## Docker
@@ -461,19 +461,19 @@ Use placeholders in header values:
 ```toml
 # Minimal - core proxy only (for embedding in other applications)
 [dependencies]
-tiny-proxy = { version = "0.3", default-features = false }
+tiny-proxy = { version = "0.4", default-features = false }
 
 # With HTTPS backend support
 [dependencies]
-tiny-proxy = { version = "0.3", default-features = false, features = ["tls"] }
+tiny-proxy = { version = "0.4", default-features = false, features = ["tls"] }
 
 # With management API
 [dependencies]
-tiny-proxy = { version = "0.3", default-features = false, features = ["tls", "api"] }
+tiny-proxy = { version = "0.4", default-features = false, features = ["tls", "api"] }
 
 # Full standalone (same as default)
 [dependencies]
-tiny-proxy = "0.3"
+tiny-proxy = "0.4"
 ```
 
 #### `cli` (default)

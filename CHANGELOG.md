@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-05-25
+
+### Added
+
+- **TLS termination** — HTTPS on the frontend with SNI-based multi-domain support
+  - `tls` directive in config: `tls /path/to/cert.pem /path/to/key.pem`
+  - SNI-based certificate resolution via `rustls` + `tokio-rustls`
+  - HTTP to HTTPS redirect: `redirect_port = tls_port - 443 + 80`
+  - `X-Forwarded-Proto: https` header set for TLS connections
+  - Auto-detect mode (`start_all()`) starts HTTPS listeners + redirect servers
+- **Structured access log** — every request logged with method, path, host, status, duration, bytes sent
+  - Auto-generated `X-Request-ID` (UUID v4) for each request
+  - Feature flag `logging` (enabled by default)
+- **Docker support**
+  - Multi-stage `Dockerfile`: Rust Alpine build to Alpine runtime (~22 MB)
+  - `docker-compose.yml` with TLS + echo backends
+  - GitHub Actions workflow for publishing to GHCR (multi-arch amd64/arm64)
+  - Docker build step in CI to catch Dockerfile regressions
+- **Security audit** in CI: `cargo deny check` + `cargo audit --deny warnings`
+- **Benchmarks** in `BENCHMARKS.md` comparing tiny-proxy vs nginx vs Caddy
+- `--addr` CLI argument is now optional — auto-detects listeners from config
+- `start_all()` method — auto-detect HTTP/TLS listeners per site address
+- `find_site()` with port normalization — browsers omit port 443/80 in Host header
+
+### Changed
+
+- `--addr` / `-a` changed from `String` to `Option<String>`
+- `cargo deny` and `cargo audit` added to CI pipeline
+- Release workflow updated for GHCR instead of Docker Hub
+
+### Fixed
+
+- Duplicate site addresses now rejected at parse time instead of silent HashMap overwrite
+- Mixed TLS and non-TLS sites on the same address rejected at parse time
+
 ## [0.3.0] - 2026-04-27
 
 ### Added
@@ -118,6 +153,7 @@ localhost:8080 {
   - GitHub Release creation
 - Example programs for library usage
 
+[0.4.0]: https://github.com/denislituev/tiny-proxy/releases/tag/v0.4.0
 [0.3.0]: https://github.com/denislituev/tiny-proxy/releases/tag/v0.3.0
 [0.2.0]: https://github.com/denislituev/tiny-proxy/releases/tag/v0.2.0
 [0.1.0]: https://github.com/denislituev/tiny-proxy/releases/tag/v0.1.0
