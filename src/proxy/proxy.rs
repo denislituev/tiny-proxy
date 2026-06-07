@@ -1,3 +1,4 @@
+use arc_swap::ArcSwap;
 use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
@@ -10,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::Semaphore;
 use tracing::{error, info, warn};
 
 #[cfg(feature = "tls")]
@@ -22,7 +23,7 @@ use crate::proxy::handler::proxy;
 /// HTTP Proxy server that can be embedded into other applications
 ///
 /// This struct encapsulates the proxy state and allows programmatic control
-/// over the proxy lifecycle. Configuration is stored in an `Arc<RwLock<Config>>`
+/// over the proxy lifecycle. Configuration is stored in an `Arc<ArcSwap<Config>>`
 /// so it can be hot-reloaded at runtime (e.g. via the API server).
 ///
 /// # Example
@@ -44,8 +45,7 @@ use crate::proxy::handler::proxy;
 /// ```no_run
 /// use tiny_proxy::{Config, Proxy};
 /// use std::sync::Arc;
-/// use tokio::sync::RwLock;
-///
+/// ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {
 ///     let config = Config::from_file("config.conf")?;
@@ -63,17 +63,14 @@ use crate::proxy::handler::proxy;
 ///
 ///     // Later, update config at runtime
 ///     let new_config = Config::from_file("updated-config.conf")?;
-///     {
-///         let mut guard = config_handle.write().await;
-///         *guard = new_config;
-///     }
+///     config_handle.store(Arc::new(new_config));
 ///
 ///     handle.await?;
 ///     Ok(())
 /// }
 /// ```
 pub struct Proxy {
-    config: Arc<RwLock<Config>>,
+    config: Arc<ArcSwap<Config>>,
     client: Client<HttpsConnector<HttpConnector>, Incoming>,
     max_concurrency: usize,
     semaphore: Arc<Semaphore>,
@@ -82,7 +79,7 @@ pub struct Proxy {
 impl Proxy {
     /// Create a new proxy instance with the given configuration
     ///
-    /// The configuration is internally wrapped in `Arc<RwLock<Config>>`
+    /// The configuration is internally wrapped in `Arc<ArcSwap<Config>>`
     /// so it can be shared with an API server for hot-reload.
     ///
     /// # Arguments
@@ -122,7 +119,7 @@ impl Proxy {
         );
 
         Self {
-            config: Arc::new(RwLock::new(config)),
+            config: Arc::new(ArcSwap::from_pointee(config)),
             client,
             max_concurrency,
             semaphore,
@@ -131,13 +128,13 @@ impl Proxy {
 
     /// Create a new proxy instance from an already shared configuration
     ///
-    /// Use this when you already have an `Arc<RwLock<Config>>` that is
+    /// Use this when you already have an `Arc<ArcSwap<Config>>` that is
     /// shared with an API server or other component.
     ///
     /// # Arguments
     ///
-    /// * `config` - Shared configuration wrapped in `Arc<RwLock<Config>>`
-    pub fn from_shared(config: Arc<RwLock<Config>>) -> Self {
+    /// * `config` - Shared configuration wrapped in `Arc<ArcSwap<Config>>`
+    pub fn from_shared(config: Arc<ArcSwap<Config>>) -> Self {
         let mut http = HttpConnector::new();
         http.set_keepalive(Some(Duration::from_secs(60)));
         http.set_nodelay(true);
@@ -214,7 +211,7 @@ impl Proxy {
     /// * `addr` - Parsed SocketAddr to listen on
     pub async fn start_with_addr(&self, addr: SocketAddr) -> anyhow::Result<()> {
         // Check if any site on this address has TLS configured
-        let config_snapshot = self.config.read().await.clone();
+        let config_snapshot = self.config.load_full();
         let tls_sites: Vec<(String, crate::config::TlsConfig)> = config_snapshot
             .sites
             .values()
@@ -277,7 +274,7 @@ impl Proxy {
     /// # }
     /// ```
     pub async fn start_all(&self) -> anyhow::Result<()> {
-        let config_snapshot = self.config.read().await.clone();
+        let config_snapshot = self.config.load_full();
 
         // Group sites by resolved listen socket (multiple hostnames may share one port)
         let mut socket_groups: HashMap<SocketAddr, Vec<&crate::config::SiteConfig>> =
@@ -332,9 +329,7 @@ impl Proxy {
                                 let client = client.clone();
                                 let config = config.clone();
                                 async move {
-                                    let config_guard = config.read().await;
-                                    let config_snapshot = Arc::new(config_guard.clone());
-                                    drop(config_guard);
+                                    let config_snapshot = config.load_full();
                                     proxy(req, client, config_snapshot, remote_addr, true).await
                                 }
                             })
@@ -443,7 +438,7 @@ impl Proxy {
     async fn run_http_loop(
         addr: SocketAddr,
         client: Client<HttpsConnector<HttpConnector>, Incoming>,
-        config: Arc<RwLock<Config>>,
+        config: Arc<ArcSwap<Config>>,
         semaphore: Arc<Semaphore>,
         max_concurrency: usize,
     ) -> anyhow::Result<()> {
@@ -461,15 +456,13 @@ impl Proxy {
                 Ok(permit) => {
                     tokio::task::spawn(async move {
                         let _permit = permit;
+
                         let service = service_fn(move |req| {
                             let client = client.clone();
                             let config = config.clone();
 
-                            let config_clone = config.clone();
                             async move {
-                                let config_guard = config_clone.read().await;
-                                let config_snapshot = Arc::new(config_guard.clone());
-                                drop(config_guard);
+                                let config_snapshot = config.load_full();
                                 proxy(req, client, config_snapshot, remote_addr, false).await
                             }
                         });
@@ -511,10 +504,9 @@ impl Proxy {
         listen_tls(addr, acceptor, semaphore, move |req, remote_addr| {
             let client = client.clone();
             let config = config.clone();
+
             async move {
-                let config_guard = config.read().await;
-                let config_snapshot = Arc::new(config_guard.clone());
-                drop(config_guard);
+                let config_snapshot = config.load_full();
                 proxy(req, client, config_snapshot, remote_addr, true).await
             }
         })
@@ -523,27 +515,27 @@ impl Proxy {
 
     /// Get a reference to the shared configuration handle
     ///
-    /// This returns a clone of the `Arc<RwLock<Config>>`, allowing
+    /// This returns a clone of the `Arc<ArcSwap<Config>>`, allowing
     /// external code (e.g. an API server) to read and update the
     /// configuration at runtime.
     ///
     /// # Returns
     ///
-    /// A cloned `Arc<RwLock<Config>>`
-    pub fn shared_config(&self) -> Arc<RwLock<Config>> {
+    /// A cloned `Arc<ArcSwap<Config>>`
+    pub fn shared_config(&self) -> Arc<ArcSwap<Config>> {
         self.config.clone()
     }
 
     /// Get a snapshot of the current configuration
     ///
-    /// Reads the current configuration and returns an owned clone.
-    /// This is useful for inspecting config without holding a lock.
+    /// Returns the current config as `Arc<Config>`.
+    /// The Arc can be shared cheaply (no cloning of Config internals).
     ///
     /// # Returns
     ///
-    /// A cloned `Config`
-    pub async fn config_snapshot(&self) -> Config {
-        self.config.read().await.clone()
+    /// An `Arc<Config>` snapshot
+    pub fn config_snapshot(&self) -> Arc<Config> {
+        self.config.load_full()
     }
 
     /// Get current concurrency limit
@@ -583,10 +575,9 @@ impl Proxy {
     /// # Arguments
     ///
     /// * `config` - New configuration to use
-    pub async fn update_config(&self, config: Config) {
-        let mut guard = self.config.write().await;
+    pub fn update_config(&self, config: Config) {
         info!("Configuration updated ({} sites)", config.sites.len());
-        *guard = config;
+        self.config.store(Arc::new(config));
     }
 }
 
@@ -640,9 +631,7 @@ mod tests {
             sites: HashMap::new(),
         };
         let proxy = Proxy::new(config);
-        // Can't check sites len synchronously anymore, use snapshot
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let snapshot = rt.block_on(proxy.config_snapshot());
+        let snapshot = proxy.config_snapshot();
         assert_eq!(snapshot.sites.len(), 0);
     }
 
@@ -661,7 +650,7 @@ mod tests {
         );
 
         let proxy = Proxy::new(config);
-        let snapshot = proxy.config_snapshot().await;
+        let snapshot = proxy.config_snapshot();
         assert_eq!(snapshot.sites.len(), 1);
         assert!(snapshot.sites.contains_key("localhost:8080"));
     }
@@ -672,7 +661,7 @@ mod tests {
             sites: HashMap::new(),
         };
         let proxy = Proxy::new(config1);
-        let snapshot = proxy.config_snapshot().await;
+        let snapshot = proxy.config_snapshot();
         assert_eq!(snapshot.sites.len(), 0);
 
         let mut config2 = Config {
@@ -687,8 +676,8 @@ mod tests {
             },
         );
 
-        proxy.update_config(config2).await;
-        let snapshot = proxy.config_snapshot().await;
+        proxy.update_config(config2);
+        let snapshot = proxy.config_snapshot();
         assert_eq!(snapshot.sites.len(), 1);
         assert!(snapshot.sites.contains_key("test.local"));
     }
@@ -704,8 +693,8 @@ mod tests {
 
         // Update via the shared handle
         {
-            let mut guard = handle.write().await;
-            guard.sites.insert(
+            let mut m = HashMap::new();
+            m.insert(
                 "shared.local".to_string(),
                 crate::config::SiteConfig {
                     address: "shared.local".to_string(),
@@ -713,10 +702,11 @@ mod tests {
                     tls: None,
                 },
             );
+            handle.store(Arc::new(Config { sites: m }));
         }
 
         // Verify the proxy sees the update
-        let snapshot = proxy.config_snapshot().await;
+        let snapshot = proxy.config_snapshot();
         assert_eq!(snapshot.sites.len(), 1);
         assert!(snapshot.sites.contains_key("shared.local"));
     }
@@ -726,23 +716,23 @@ mod tests {
         let config = Config {
             sites: HashMap::new(),
         };
-        let shared = Arc::new(RwLock::new(config));
+        let shared = Arc::new(ArcSwap::from_pointee(config));
         let proxy = Proxy::from_shared(shared.clone());
 
-        // Verify both point to the same config
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        {
-            let mut guard = rt.block_on(shared.write());
-            guard.sites.insert(
-                "from-shared.local".to_string(),
-                crate::config::SiteConfig {
-                    address: "from-shared.local".to_string(),
-                    directives: vec![],
-                    tls: None,
-                },
-            );
-        }
-        let snapshot = rt.block_on(proxy.config_snapshot());
+        // Update config via shared handle
+        let mut m = HashMap::new();
+        m.insert(
+            "from-shared.local".to_string(),
+            crate::config::SiteConfig {
+                address: "from-shared.local".to_string(),
+                directives: vec![],
+                tls: None,
+            },
+        );
+        shared.store(Arc::new(Config { sites: m }));
+
+        // Verify the proxy sees the update
+        let snapshot = proxy.config_snapshot();
         assert_eq!(snapshot.sites.len(), 1);
         assert!(snapshot.sites.contains_key("from-shared.local"));
     }

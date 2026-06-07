@@ -1,6 +1,7 @@
 //! API endpoints for proxy management
 
 use anyhow::Result;
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use http_body::Body;
 use http_body_util::{BodyExt, Full};
@@ -13,12 +14,12 @@ use crate::config::Config;
 /// Handle GET /config
 pub async fn handle_get_config<B>(
     _req: Request<B>,
-    config: Arc<tokio::sync::RwLock<Config>>,
+    config: Arc<ArcSwap<Config>>,
 ) -> Result<Response<Full<Bytes>>>
 where
     B: Body,
 {
-    let config = config.read().await;
+    let config = config.load_full();
 
     let json = serde_json::to_string_pretty(&*config)
         .unwrap_or_else(|_| r#"{"error": "Failed to serialize config"}"#.to_string());
@@ -57,7 +58,7 @@ where
 /// ```
 pub async fn handle_post_config<B>(
     req: Request<B>,
-    config: Arc<tokio::sync::RwLock<Config>>,
+    config: Arc<ArcSwap<Config>>,
 ) -> Result<Response<Full<Bytes>>>
 where
     B: Body,
@@ -121,9 +122,8 @@ where
 
     // Atomically replace the configuration
     {
-        let mut guard = config.write().await;
         let sites_count = new_config.sites.len();
-        *guard = new_config;
+        config.store(Arc::new(new_config));
         info!(
             "POST /config - Configuration updated successfully ({} sites)",
             sites_count
@@ -182,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_get_config() {
-        let config = Arc::new(tokio::sync::RwLock::new(Config {
+        let config = Arc::new(ArcSwap::from_pointee(Config {
             sites: HashMap::new(),
         }));
 
@@ -194,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_post_config_valid_json() {
-        let config = Arc::new(tokio::sync::RwLock::new(Config {
+        let config = Arc::new(ArcSwap::from_pointee(Config {
             sites: HashMap::new(),
         }));
 
@@ -219,14 +219,14 @@ mod tests {
         assert_eq!(response.status(), 200);
 
         // Verify config was actually updated
-        let guard = config.read().await;
+        let guard = config.load_full();
         assert_eq!(guard.sites.len(), 1);
         assert!(guard.sites.contains_key("localhost:8080"));
     }
 
     #[tokio::test]
     async fn test_handle_post_config_invalid_json() {
-        let config = Arc::new(tokio::sync::RwLock::new(Config {
+        let config = Arc::new(ArcSwap::from_pointee(Config {
             sites: HashMap::new(),
         }));
 
@@ -240,13 +240,13 @@ mod tests {
         assert_eq!(response.status(), 400);
 
         // Verify config was NOT updated
-        let guard = config.read().await;
+        let guard = config.load_full();
         assert_eq!(guard.sites.len(), 0);
     }
 
     #[tokio::test]
     async fn test_handle_post_config_empty_body() {
-        let config = Arc::new(tokio::sync::RwLock::new(Config {
+        let config = Arc::new(ArcSwap::from_pointee(Config {
             sites: HashMap::new(),
         }));
 

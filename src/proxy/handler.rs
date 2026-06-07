@@ -147,35 +147,28 @@ pub async fn proxy(
     // Generate or reuse request ID
     let initial_request_id = ensure_request_id(&mut req);
 
-    // Extract request info before processing
-    #[cfg(feature = "logging")]
-    let method = req.method().clone().to_string();
-    let path = req.uri().path().to_string();
-    let host = req
-        .headers()
-        .get(hyper::header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost")
-        .to_string();
-
     #[cfg(feature = "logging")]
     let span = info_span!("request", req_id = %initial_request_id);
 
-    #[allow(unused_variables)]
     let future = async move {
+        let path = req.uri().path().to_string();
+        let host = req
+            .headers()
+            .get(hyper::header::HOST)
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("localhost");
+
         #[cfg(feature = "logging")]
         let mut log_guard = AccessLogGuard::new(
             initial_request_id.clone(),
             remote_addr,
-            method,
+            req.method().to_string(),
             path.clone(),
-            host.clone(),
+            host.to_string(),
         );
 
         // Find site configuration by host
-        // Browsers send Host: example.com (no port) for default ports,
-        // but config keys may be "example.com:443". Try both.
-        let site_config = match find_site(&config, &host, is_tls) {
+        let site_config = match find_site(&config, host, is_tls) {
             Some(config) => config,
             None => {
                 error!("No configuration found for host: {}", host);
@@ -469,18 +462,19 @@ pub fn match_pattern(pattern: &str, path: &str) -> Option<String> {
 ///
 /// But config keys include the port: `"example.com:443"`, `"example.com:80"`.
 ///
-/// This function tries multiple lookup strategies:
-/// 1. Exact match: `host` as-is
-/// 2. If `host` has no port → try `host:<default_port>` based on `is_tls`
-/// 3. If `host` has a port → also try just the hostname (in case config has no port)
+/// Look up a site by Host header value.
+///
+/// Tries, in order:
+/// 1. Exact match on the raw host string.
+/// 2. If host has no port → append default port (443 for TLS, 80 for HTTP) and retry.
+/// 3. For TLS, match by SNI hostname if exactly one site matches.
+/// 4. If host has a port → strip it and try the bare hostname.
 ///
 /// # Limitations
 ///
-/// For non-default TLS ports (e.g., 8443), browsers always include the port
-/// in the `Host` header (`Host: example.com:8443`), so strategy 1 (exact match)
-/// works fine. The fallback in strategy 2 only tries ports 443 (TLS) and 80 (HTTP).
-/// This means a non-browser client sending `Host: example.com` without a port to
-/// a TLS listener on :8443 will get a 404 — this is a protocol violation by the client.
+/// For non-default TLS ports (e.g., 8443), browsers include the port in `Host`
+/// (`Host: example.com:8443`), so exact match works. A client sending `Host: example.com`
+/// without a port to a TLS listener on :8443 gets 404 — that violates normal HTTP usage.
 pub fn find_site<'a>(config: &'a Config, host: &str, is_tls: bool) -> Option<&'a SiteConfig> {
     // 1. Exact match
     if let Some(site) = config.sites.get(host) {
@@ -525,11 +519,12 @@ pub fn find_site<'a>(config: &'a Config, host: &str, is_tls: bool) -> Option<&'a
         let hostname = if host.starts_with('[') {
             // IPv6 [::1]:port → ::1
             let end = host.find(']').unwrap_or(host.len());
-            host[1..end].to_string()
+            &host[1..end]
         } else {
-            host.rsplit(':').next_back().unwrap_or(host).to_string()
+            // example.com:443 → example.com
+            host.rsplit_once(':').map(|(name, _)| name).unwrap_or(host)
         };
-        if let Some(site) = config.sites.get(&hostname) {
+        if let Some(site) = config.sites.get(hostname) {
             return Some(site);
         }
     }

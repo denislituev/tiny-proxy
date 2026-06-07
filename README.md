@@ -163,8 +163,8 @@ async fn main() -> anyhow::Result<()> {
 
 #### Hot-Reload Configuration
 
-Update configuration at runtime without restart. The proxy uses `Arc<RwLock<Config>>` internally,
-so routing and directive changes take effect immediately for new connections.
+Update configuration at runtime without restart. The proxy uses `Arc<ArcSwap<Config>>` internally,
+so routing and directive changes take effect on the next request (including keep-alive connections).
 
 > **TLS certificates**: cert/key files and `TlsAcceptor` are loaded when a listener starts.
 > Hot-reload updates site routing and directives, but **not** TLS certificates — to pick up
@@ -173,9 +173,9 @@ so routing and directive changes take effect immediately for new connections.
 Example:
 
 ```rust
+use arc_swap::ArcSwap;
 use tiny_proxy::{Config, Proxy};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -192,12 +192,9 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Update config at runtime — takes effect immediately
+    // Update config at runtime — takes effect on the next request
     let new_config = Config::from_file("new-config.conf")?;
-    {
-        let mut guard = config_handle.write().await;
-        *guard = new_config;
-    }
+    config_handle.store(Arc::new(new_config));
 
     handle.await?;
     Ok(())
@@ -208,7 +205,7 @@ Or use the built-in `update_config` method:
 
 ```rust
 let new_config = Config::from_file("updated-config.conf")?;
-proxy.update_config(new_config).await;
+proxy.update_config(new_config);
 ```
 
 ## Configuration
@@ -493,11 +490,11 @@ Enable TLS support — both **frontend TLS termination** (HTTPS listeners) and *
 Management API for runtime configuration:
 
 ```rust
+use arc_swap::ArcSwap;
 use tiny_proxy::api;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
-let config = Arc::new(RwLock::new(Config::from_file("config.conf")?));
+let config = Arc::new(ArcSwap::from_pointee(Config::from_file("config.conf")?));
 api::start_api_server("127.0.0.1:8081", config).await?;
 ```
 
@@ -517,11 +514,11 @@ See the [module documentation](https://docs.rs/tiny-proxy) for detailed API refe
 - `Config::from_file(path)` - Load configuration from file
 - `Config::from_str(content)` - Parse configuration from string
 - `Proxy::new(config)` - Create proxy instance
-- `Proxy::from_shared(config)` - Create proxy from shared `Arc<RwLock<Config>>`
+- `Proxy::from_shared(config)` - Create proxy from shared `Arc<ArcSwap<Config>>`
 - `Proxy::start(addr)` - Start proxy server
-- `Proxy::shared_config()` - Get `Arc<RwLock<Config>>` for external config updates
-- `Proxy::config_snapshot()` - Read current configuration as owned value
-- `Proxy::update_config(config)` - Update configuration at runtime (async)
+- `Proxy::shared_config()` - Get `Arc<ArcSwap<Config>>` for external config updates
+- `Proxy::config_snapshot()` - Read current configuration as `Arc<Config>`
+- `Proxy::update_config(config)` - Update configuration at runtime
 
 ## Testing
 
