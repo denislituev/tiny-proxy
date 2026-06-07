@@ -34,9 +34,7 @@ async fn get_random_port_addr() -> std::net::SocketAddr {
 
 /// Send one HTTP/1.1 request on an existing stream and return the response body.
 async fn http_get_on_stream(stream: &mut TcpStream, host: &str, path: &str) -> String {
-    let request = format!(
-        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n\r\n"
-    );
+    let request = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: keep-alive\r\n\r\n");
     stream.write_all(request.as_bytes()).await.unwrap();
 
     let mut buf = vec![0u8; 4096];
