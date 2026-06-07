@@ -9,7 +9,10 @@ use tiny_proxy::config::Config;
 use std::sync::Arc;
 
 #[cfg(feature = "api")]
-use tokio::sync::{broadcast, RwLock};
+use arc_swap::ArcSwap;
+
+#[cfg(feature = "api")]
+use tokio::sync::broadcast;
 
 #[cfg(feature = "api")]
 use tiny_proxy::start_api_server;
@@ -96,7 +99,7 @@ async fn run_proxy_only(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
 #[cfg(feature = "api")]
 async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
     // Create shared configuration
-    let shared_config = Arc::new(RwLock::new(config.clone()));
+    let shared_config = Arc::new(ArcSwap::from_pointee(config.clone()));
 
     // Create shutdown channel
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
@@ -206,7 +209,7 @@ async fn run_with_api(cli: Cli, config: Config) -> Result<(), anyhow::Error> {
 async fn run_proxy_server(
     addr: Option<String>,
     max_concurrency: usize,
-    shared_config: Arc<RwLock<Config>>,
+    shared_config: Arc<ArcSwap<Config>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
     // Create proxy from the shared config handle — any updates to
@@ -247,7 +250,7 @@ async fn run_proxy_server(
 #[cfg(feature = "api")]
 async fn run_api_server(
     addr: String,
-    shared_config: Arc<RwLock<Config>>,
+    shared_config: Arc<ArcSwap<Config>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<(), anyhow::Error> {
     tokio::select! {

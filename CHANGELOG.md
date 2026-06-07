@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Hot-reload config storage: `Arc<RwLock<Config>>` → `Arc<ArcSwap<Config>>` (lock-free reads, `Arc` snapshots instead of full `Config` clones)
+- `Proxy::config_snapshot()` is now synchronous and returns `Arc<Config>` (was `async fn` returning owned `Config`)
+- `Proxy::update_config()` is now synchronous (was `async fn`)
+
+### Fixed
+
+- Hot-reload now applies on every HTTP request, including subsequent requests on keep-alive connections
+- Hot-reload on TLS listeners started via `start_with_addr` / `start_tls` now picks up routing changes without restart
+
+### Added
+
+- Dependency: `arc-swap`
+- Integration test: config hot-reload over a single keep-alive connection
+
 ## [0.4.0] - 2026-05-25
 
 ### Added

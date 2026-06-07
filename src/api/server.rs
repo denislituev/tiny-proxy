@@ -3,6 +3,7 @@
 //! This module provides a REST API for managing the proxy configuration,
 //! including viewing and updating configuration settings.
 
+use arc_swap::ArcSwap;
 use http_body_util::Full;
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
@@ -29,21 +30,22 @@ use crate::error::Result;
 /// # Arguments
 ///
 /// * `addr` - Address to listen on (e.g., "127.0.0.1:8081")
-/// * `config` - Shared configuration wrapped in Arc<RwLock<Config>>
+/// * `config` - Shared configuration wrapped in `Arc<ArcSwap<Config>>`
 ///
 /// # Example
 ///
 /// ```no_run
 /// # use tiny_proxy::{Config, api};
+/// # use arc_swap::ArcSwap;
 /// # use std::sync::Arc;
 /// # #[tokio::main]
 /// # async fn main() -> anyhow::Result<()> {
-/// let config = Arc::new(tokio::sync::RwLock::new(Config::from_file("config.conf")?));
+/// let config = Arc::new(ArcSwap::from_pointee(Config::from_file("config.conf")?));
 /// api::server::start_api_server("127.0.0.1:8081", config).await?;
 /// # Ok(())
 /// # }
 /// ```
-pub async fn start_api_server(addr: &str, config: Arc<tokio::sync::RwLock<Config>>) -> Result<()> {
+pub async fn start_api_server(addr: &str, config: Arc<ArcSwap<Config>>) -> Result<()> {
     let addr: SocketAddr = addr.parse()?;
     start_api_server_with_addr(addr, config).await
 }
@@ -55,10 +57,10 @@ pub async fn start_api_server(addr: &str, config: Arc<tokio::sync::RwLock<Config
 /// # Arguments
 ///
 /// * `addr` - Parsed SocketAddr to listen on
-/// * `config` - Shared configuration wrapped in Arc<RwLock<Config>>
+/// * `config` - Shared configuration wrapped in `Arc<ArcSwap<Config>>`
 pub async fn start_api_server_with_addr(
     addr: SocketAddr,
-    config: Arc<tokio::sync::RwLock<Config>>,
+    config: Arc<ArcSwap<Config>>,
 ) -> Result<()> {
     let listener = TcpListener::bind(&addr).await?;
 
@@ -87,7 +89,7 @@ pub async fn start_api_server_with_addr(
 /// Routes requests to appropriate endpoints based on method and path.
 async fn handle_api_request(
     req: Request<Incoming>,
-    config: Arc<tokio::sync::RwLock<Config>>,
+    config: Arc<ArcSwap<Config>>,
 ) -> anyhow::Result<Response<Full<bytes::Bytes>>> {
     // TODO: Add authentication middleware if needed
     // let req = middleware::auth_middleware(req, api_key).await?;
