@@ -34,6 +34,8 @@ pub enum Directive {
         to: String,
         connect_timeout: Option<u64>,
         read_timeout: Option<u64>,
+        #[cfg_attr(feature = "api", serde(default))]
+        header_up: Vec<HeaderDirective>,
     },
     HandlePath {
         pattern: String,
@@ -62,4 +64,13 @@ pub enum Directive {
         status: u16,
         body: String,
     },
+}
+
+/// A single header operation within a `header_up` block.
+/// `value = None` means the header should be removed.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "api", derive(Serialize, Deserialize))]
+pub struct HeaderDirective {
+    pub name: String,
+    pub value: Option<String>,
 }

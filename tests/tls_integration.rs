@@ -192,6 +192,7 @@ async fn test_tls_x_forwarded_proto_https() {
                 to: format!("http://127.0.0.1:{}", backend_addr.port()),
                 connect_timeout: None,
                 read_timeout: None,
+                header_up: vec![],
             }],
             tls: Some(tiny_proxy::config::TlsConfig {
                 cert_path: cert_file.path().to_str().unwrap().to_string(),

@@ -25,5 +25,5 @@ pub mod headers;
 pub mod validator;
 
 // Re-export commonly used functions for convenience
-pub use headers::process_header_substitution;
+pub use headers::{process_header_substitution, process_upstream_substitution};
 pub use validator::validate_token;

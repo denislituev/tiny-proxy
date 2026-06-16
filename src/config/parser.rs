@@ -1,4 +1,5 @@
 use crate::config::address::{extract_hostname, resolve_listen_addr};
+use crate::config::models::HeaderDirective;
 use crate::config::{Config, Directive, SiteConfig};
 use crate::error::ProxyError;
 use std::collections::HashMap;
@@ -12,6 +13,8 @@ struct PendingBlock {
     // Timeout settings for reverse_proxy blocks (in seconds)
     connect_timeout: Option<u64>,
     read_timeout: Option<u64>,
+    // header_up operations collected inside a reverse_proxy block
+    header_up: Vec<HeaderDirective>,
 }
 
 /// Parse a human-readable duration string into seconds.
@@ -107,6 +110,7 @@ impl FromStr for Config {
                     args,
                     connect_timeout: None,
                     read_timeout: None,
+                    header_up: vec![],
                 });
                 directive_stack.push(vec![]);
                 continue;
@@ -138,6 +142,7 @@ impl FromStr for Config {
                                 to,
                                 connect_timeout: block_info.connect_timeout,
                                 read_timeout: block_info.read_timeout,
+                                header_up: block_info.header_up,
                             }
                         }
                         _ => {
@@ -188,7 +193,7 @@ impl FromStr for Config {
             let directive_name = parts[0];
             let args = parts[1..].to_vec();
 
-            // Special handling: timeout settings inside a reverse_proxy block
+            // Special handling: timeout and header_up settings inside a reverse_proxy block
             if let Some(block) = block_stack.last_mut() {
                 if block.directive_type == "reverse_proxy" {
                     match directive_name {
@@ -218,9 +223,44 @@ impl FromStr for Config {
                             })?);
                             continue;
                         }
+                        "header_up" => {
+                            let raw_name = args.first().cloned().ok_or_else(|| {
+                                ProxyError::Parse(format!(
+                                    "Missing header name for header_up on line {}",
+                                    line_num + 1
+                                ))
+                            })?;
+                            let directive = if let Some(name) = raw_name.strip_prefix('-') {
+                                if name.is_empty() {
+                                    return Err(ProxyError::Parse(format!(
+                                        "Missing header name after '-' in header_up on line {}",
+                                        line_num + 1
+                                    )));
+                                }
+                                HeaderDirective {
+                                    name: name.to_string(),
+                                    value: None,
+                                }
+                            } else {
+                                let value = args[1..].join(" ");
+                                if value.is_empty() {
+                                    return Err(ProxyError::Parse(format!(
+                                        "Missing value for header_up {} on line {}",
+                                        raw_name,
+                                        line_num + 1
+                                    )));
+                                }
+                                HeaderDirective {
+                                    name: raw_name.to_string(),
+                                    value: Some(value),
+                                }
+                            };
+                            block.header_up.push(directive);
+                            continue;
+                        }
                         _ => {
                             return Err(ProxyError::Parse(format!(
-                                "Unexpected directive '{}' inside reverse_proxy block on line {}. Only connect_timeout and read_timeout are allowed.",
+                                "Unexpected directive '{}' inside reverse_proxy block on line {}. Allowed: connect_timeout, read_timeout, header_up.",
                                 directive_name, line_num + 1
                             )));
                         }
@@ -265,6 +305,7 @@ impl FromStr for Config {
                         to: to.to_string(),
                         connect_timeout: None,
                         read_timeout: None,
+                        header_up: vec![],
                     }
                 }
                 "uri_replace" => {
@@ -447,6 +488,7 @@ mod tests {
                 to,
                 connect_timeout,
                 read_timeout,
+                ..
             } => {
                 assert_eq!(to, "http://backend:9001");
                 assert_eq!(*connect_timeout, None);
@@ -473,6 +515,7 @@ mod tests {
                 to,
                 connect_timeout,
                 read_timeout,
+                ..
             } => {
                 assert_eq!(to, "http://backend:9001");
                 assert_eq!(*connect_timeout, Some(10));
@@ -500,6 +543,33 @@ mod tests {
             } => {
                 assert_eq!(*connect_timeout, Some(5));
                 assert_eq!(*read_timeout, None);
+            }
+            _ => panic!("Expected ReverseProxy directive"),
+        }
+    }
+
+    #[test]
+    fn test_parse_reverse_proxy_with_header_up() {
+        let config = r#"localhost:8080 {
+    reverse_proxy https://api.example.com:443 {
+        header_up Host {upstream_host}
+        header_up X-Original-Uri {request.uri}
+        header_up -Accept-Encoding
+    }
+}"#;
+        let result: Config = config.parse().unwrap();
+        let site = result.sites.get("localhost:8080").unwrap();
+
+        match &site.directives[0] {
+            Directive::ReverseProxy { to, header_up, .. } => {
+                assert_eq!(to, "https://api.example.com:443");
+                assert_eq!(header_up.len(), 3);
+                assert_eq!(header_up[0].name, "Host");
+                assert_eq!(header_up[0].value.as_deref(), Some("{upstream_host}"));
+                assert_eq!(header_up[1].name, "X-Original-Uri");
+                assert_eq!(header_up[1].value.as_deref(), Some("{request.uri}"));
+                assert_eq!(header_up[2].name, "Accept-Encoding");
+                assert!(header_up[2].value.is_none());
             }
             _ => panic!("Expected ReverseProxy directive"),
         }

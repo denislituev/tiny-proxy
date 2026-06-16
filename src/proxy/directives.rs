@@ -2,7 +2,8 @@ use hyper::body::Incoming;
 use hyper::Request;
 use tracing::info;
 
-use crate::auth::process_header_substitution;
+use crate::auth::{process_header_substitution, process_upstream_substitution};
+use crate::config::HeaderDirective;
 
 use crate::proxy::ActionResult;
 
@@ -12,16 +13,21 @@ pub fn handle_reverse_proxy(
     path: &str,
     connect_timeout: Option<u64>,
     read_timeout: Option<u64>,
+    header_up: Vec<HeaderDirective>,
 ) -> ActionResult {
     info!(
-        "   Proxying to: {} (connect_timeout: {:?}, read_timeout: {:?})",
-        to, connect_timeout, read_timeout
+        "   Proxying to: {} (connect_timeout: {:?}, read_timeout: {:?}, header_up: {} ops)",
+        to,
+        connect_timeout,
+        read_timeout,
+        header_up.len()
     );
     ActionResult::ReverseProxy {
         backend_url: to.to_string(),
         path_to_send: path.to_string(),
         connect_timeout,
         read_timeout,
+        header_up,
     }
 }
 
@@ -73,6 +79,61 @@ pub fn handle_header<B>(
     }
 
     Ok(())
+}
+
+/// Apply `header_up` directives to the outbound (upstream) request.
+///
+/// Runs after default Host / X-Forwarded-* headers so explicit `header_up` can override them.
+pub fn apply_header_up<B>(
+    directives: &[HeaderDirective],
+    req: &mut Request<B>,
+    upstream_host: &str,
+    request_uri: &str,
+    remote_ip: &str,
+) {
+    use hyper::header::{HeaderName, HeaderValue};
+
+    for directive in directives {
+        match HeaderName::from_bytes(directive.name.as_bytes()) {
+            Ok(header_name) => match &directive.value {
+                Some(val) => {
+                    match process_upstream_substitution(
+                        val,
+                        req,
+                        upstream_host,
+                        request_uri,
+                        remote_ip,
+                    ) {
+                        Ok(processed) => match HeaderValue::from_str(&processed) {
+                            Ok(header_value) => {
+                                req.headers_mut().insert(header_name, header_value);
+                                info!("   Applied header_up: {} = {}", directive.name, processed);
+                            }
+                            Err(e) => {
+                                info!(
+                                    "   Failed to apply header_up {}: invalid value: {}",
+                                    directive.name, e
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            info!("   Failed to apply header_up {}: {}", directive.name, e);
+                        }
+                    }
+                }
+                None => {
+                    req.headers_mut().remove(&header_name);
+                    info!("   Removed header_up: {}", directive.name);
+                }
+            },
+            Err(e) => {
+                info!(
+                    "   Failed to apply header_up {}: invalid header name: {}",
+                    directive.name, e
+                );
+            }
+        }
+    }
 }
 
 /// Handle uri_replace directive - replace substring in path
@@ -248,5 +309,53 @@ mod tests {
             }
             _ => panic!("Expected Redirect action"),
         }
+    }
+
+    #[test]
+    fn test_apply_header_up_set_and_remove() {
+        use bytes::Bytes;
+        use http_body_util::Empty;
+
+        let mut req = Request::builder()
+            .header("Accept-Encoding", "gzip")
+            .body(Empty::<Bytes>::new())
+            .unwrap();
+
+        let directives = vec![
+            HeaderDirective {
+                name: "Host".to_string(),
+                value: Some("{upstream_host}".to_string()),
+            },
+            HeaderDirective {
+                name: "X-Original-Uri".to_string(),
+                value: Some("{request.uri}".to_string()),
+            },
+            HeaderDirective {
+                name: "Accept-Encoding".to_string(),
+                value: None,
+            },
+        ];
+
+        apply_header_up(
+            &directives,
+            &mut req,
+            "api.example.com:443",
+            "/api/test?q=1",
+            "10.0.0.1",
+        );
+
+        assert_eq!(
+            req.headers().get("Host").unwrap().to_str().unwrap(),
+            "api.example.com:443"
+        );
+        assert_eq!(
+            req.headers()
+                .get("X-Original-Uri")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "/api/test?q=1"
+        );
+        assert!(req.headers().get("Accept-Encoding").is_none());
     }
 }
