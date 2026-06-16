@@ -27,7 +27,7 @@ use crate::proxy::directives::{
     handle_strip_prefix, handle_uri_replace,
 };
 
-/// Unified response body type - can handle both streaming (Incoming) and buffered (Full<Bytes>)
+/// Unified response body type - can handle both streaming (`Incoming`) and buffered (`Full<Bytes>`)
 /// This allows us to support SSE streaming while maintaining a simple API
 type ResponseBody =
     http_body_util::combinators::BoxBody<Bytes, Box<dyn std::error::Error + Send + Sync>>;
@@ -158,6 +158,10 @@ pub async fn proxy(
             .and_then(|h| h.to_str().ok())
             .unwrap_or("localhost");
 
+        #[cfg(feature = "metrics")]
+        let mut metrics_guard =
+            crate::metrics::MetricsGuard::new(req.method().to_string(), host.to_string());
+
         #[cfg(feature = "logging")]
         let mut log_guard = AccessLogGuard::new(
             initial_request_id.clone(),
@@ -182,6 +186,8 @@ pub async fn proxy(
                     log_guard.set_bytes_sent(_body_len);
                     log_guard.finish(404);
                 }
+                #[cfg(feature = "metrics")]
+                metrics_guard.record(404);
                 return Ok(response);
             }
         };
@@ -204,6 +210,8 @@ pub async fn proxy(
                     log_guard.set_bytes_sent(_body_len);
                     log_guard.finish(500);
                 }
+                #[cfg(feature = "metrics")]
+                metrics_guard.record(500);
                 return Ok(response);
             }
         };
@@ -235,6 +243,8 @@ pub async fn proxy(
                     log_guard.set_bytes_sent(0);
                     log_guard.finish(status_code.as_u16());
                 }
+                #[cfg(feature = "metrics")]
+                metrics_guard.record(status_code.as_u16());
                 Ok(response)
             }
             ActionResult::Respond { status, body } => {
@@ -253,6 +263,8 @@ pub async fn proxy(
                     log_guard.set_bytes_sent(_body_len);
                     log_guard.finish(status_code.as_u16());
                 }
+                #[cfg(feature = "metrics")]
+                metrics_guard.record(status_code.as_u16());
                 Ok(response)
             }
             ActionResult::ReverseProxy {
@@ -335,6 +347,8 @@ pub async fn proxy(
                         let response = builder.header("X-Request-ID", &request_id).body(boxed)?;
                         #[cfg(feature = "logging")]
                         log_guard.finish(status.as_u16());
+                        #[cfg(feature = "metrics")]
+                        metrics_guard.record(status.as_u16());
                         Ok(response)
                     }
                     Ok(Err(e)) => {
@@ -355,6 +369,8 @@ pub async fn proxy(
                             log_guard.set_bytes_sent(_body_len);
                             log_guard.finish(502);
                         }
+                        #[cfg(feature = "metrics")]
+                        metrics_guard.record(502);
                         Ok(response)
                     }
                     Err(_) => {
@@ -373,6 +389,8 @@ pub async fn proxy(
                             log_guard.set_bytes_sent(_body_len);
                             log_guard.finish(504);
                         }
+                        #[cfg(feature = "metrics")]
+                        metrics_guard.record(504);
                         Ok(response)
                     }
                 }

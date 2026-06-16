@@ -239,8 +239,12 @@ where
             let _permit = permit; // held until task completes
 
             let tls_stream = match acceptor.accept(io.into_inner()).await {
-                Ok(s) => s,
+                Ok(s) => {
+                    crate::metrics::tls_handshake("ok");
+                    s
+                }
                 Err(e) => {
+                    crate::metrics::tls_handshake("fail");
                     // Handshake failures are common (wrong SNI, expired cert, etc.)
                     // Don't log at error level to avoid noise
                     info!("TLS handshake failed from {}: {}", remote_addr, e);

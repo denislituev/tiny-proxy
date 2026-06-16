@@ -25,4 +25,9 @@ pub struct Cli {
     /// Address for API server to listen on
     #[arg(long, default_value = "127.0.0.1:8081")]
     pub api_addr: String,
+
+    /// Address for Prometheus metrics server (requires 'metrics' feature).
+    /// Can also be set via the `TINY_PROXY_METRICS_ADDR` environment variable.
+    #[arg(long, env = "TINY_PROXY_METRICS_ADDR")]
+    pub metrics_addr: Option<String>,
 }

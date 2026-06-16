@@ -87,7 +87,7 @@ jobs:
         uses: taiki-e/install-action@cargo-audit
 
       - name: cargo deny check
-        run: cargo deny check
+        run: cargo deny check --config .cargo/deny.toml
 
       - name: cargo audit
         run: cargo audit --deny warnings

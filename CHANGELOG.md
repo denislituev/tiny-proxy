@@ -7,21 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prometheus metrics** (optional `metrics` feature): request counters, latency
+  histograms, active-request gauge, and TLS handshake counters, exposed on
+  `/metrics` via a dedicated admin HTTP server.
+  - `http_requests_total{method,status,site}` — counter
+  - `http_request_duration_seconds{method,status}` — histogram (11 buckets, 5ms–10s)
+  - `http_active_requests` — gauge (in-flight requests)
+  - `tls_handshakes_total{status}` — counter (`ok` / `fail`)
+  - CLI flag `--metrics-addr` and env var `TINY_PROXY_METRICS_ADDR`
+- **Lock-free hot-reload**: config storage switched to `Arc<ArcSwap<Config>>`
+  — reads are wait-free, snapshots return `Arc<Config>` instead of cloning.
+  `Proxy::config_snapshot()` and `Proxy::update_config()` are now synchronous.
+- Integration tests: config hot-reload on keep-alive connections, Prometheus
+  `/metrics` endpoint (counters, histogram buckets, gauge, metadata).
+- Dependencies: `arc-swap`, `metrics`, `metrics-exporter-prometheus` (optional)
+
 ### Changed
 
-- Hot-reload config storage: `Arc<RwLock<Config>>` → `Arc<ArcSwap<Config>>` (lock-free reads, `Arc` snapshots instead of full `Config` clones)
-- `Proxy::config_snapshot()` is now synchronous and returns `Arc<Config>` (was `async fn` returning owned `Config`)
-- `Proxy::update_config()` is now synchronous (was `async fn`)
+- `hyper-rustls` is now a **core dependency** (was optional under `tls`).
+  HTTPS **backend** connections are always available; the `tls` feature now
+  controls only frontend TLS termination (rustls / tokio-rustls / rustls-pemfile).
+- `cargo-deny` configuration moved from `deny.toml` to `.cargo/deny.toml`;
+  CI now invokes `cargo deny check --config .cargo/deny.toml`.
 
 ### Fixed
 
-- Hot-reload now applies on every HTTP request, including subsequent requests on keep-alive connections
-- Hot-reload on TLS listeners started via `start_with_addr` / `start_tls` now picks up routing changes without restart
-
-### Added
-
-- Dependency: `arc-swap`
-- Integration test: config hot-reload over a single keep-alive connection
+- Hot-reload now applies on every HTTP request, including subsequent requests on
+  keep-alive connections (previously only the first request on a connection saw
+  config updates).
+- Hot-reload on TLS listeners started via `start_with_addr` / `start_tls` now
+  picks up routing changes without a restart.
+- `cargo build --no-default-features` no longer fails: `hyper-util` enables the
+  `client-legacy` feature, and `hyper-rustls` is no longer optional in the core
+  proxy module.
+- Missing `#[cfg(feature = "tls")]` guards in `proxy.rs` for the redirect-port
+  helper and `HashSet` import.
+- `rustdoc` warning: `Full<Bytes>` in a doc comment was parsed as an unclosed
+  HTML tag; the type names are now wrapped in backticks.
 
 ## [0.4.0] - 2026-05-25
 

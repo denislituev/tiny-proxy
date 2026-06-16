@@ -18,6 +18,9 @@ use tokio::sync::broadcast;
 use tiny_proxy::start_api_server;
 use tiny_proxy::Proxy;
 
+#[cfg(feature = "metrics")]
+use tiny_proxy::metrics;
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt()
@@ -28,6 +31,12 @@ async fn main() -> Result<(), anyhow::Error> {
 
     info!("Tiny Proxy Server v{}", env!("CARGO_PKG_VERSION"));
     info!("Loading config from: {}", cli.config);
+
+    #[cfg(feature = "metrics")]
+    if let Some(ref metrics_addr) = cli.metrics_addr {
+        let addr: std::net::SocketAddr = metrics_addr.parse()?;
+        metrics::start_metrics_server(addr)?;
+    }
 
     let config = Config::from_file(&cli.config)?;
 

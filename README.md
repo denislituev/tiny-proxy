@@ -22,6 +22,7 @@ Lightweight, embeddable HTTP reverse proxy written in Rust with Caddy-like confi
 - **Direct Responses**: Respond with custom status codes and bodies
 - **Authentication Module**: Token validation and header substitution
 - **Management API**: REST API for runtime configuration management (optional feature)
+- **Prometheus Metrics**: Request counters, latency histograms, and TLS handshake metrics (optional feature)
 
 ## Installation
 
@@ -450,23 +451,31 @@ Use placeholders in header values:
 ### Default Features
 
 - `cli` - Command-line interface support
-- `tls` - HTTPS backend support
+- `tls` - HTTPS on the frontend (TLS termination, SNI-based multi-domain)
 - `api` - Management API for runtime configuration
+- `logging` - Structured access logs
+
+> **Note**: HTTPS **backend** connections (`hyper-rustls`) are always available —
+> the `tls` feature only controls frontend TLS termination.
 
 ### Optional Features
 
 ```toml
-# Minimal - core proxy only (for embedding in other applications)
+# Minimal - core HTTP proxy with HTTPS backend support (for embedding)
 [dependencies]
 tiny-proxy = { version = "0.4", default-features = false }
 
-# With HTTPS backend support
+# With frontend TLS termination
 [dependencies]
 tiny-proxy = { version = "0.4", default-features = false, features = ["tls"] }
 
 # With management API
 [dependencies]
 tiny-proxy = { version = "0.4", default-features = false, features = ["tls", "api"] }
+
+# With Prometheus metrics
+[dependencies]
+tiny-proxy = { version = "0.4", default-features = false, features = ["metrics"] }
 
 # Full standalone (same as default)
 [dependencies]
@@ -479,11 +488,13 @@ Enable CLI dependencies and `tiny-proxy` binary.
 
 #### `tls` (default)
 
-Enable TLS support — both **frontend TLS termination** (HTTPS listeners) and **backend HTTPS** connections:
+Enable **frontend TLS termination** (HTTPS listeners) with SNI-based multi-domain support:
 
 - Frontend: `rustls` + `tokio-rustls` for HTTPS listeners with SNI-based routing
-- Backend: `hyper-rustls` for proxying to HTTPS backends
 - `rustls-pemfile` for loading PEM certificate chains and private keys
+
+> HTTPS **backend** connections (`hyper-rustls`) are always available, regardless
+> of this feature.
 
 #### `api` (default)
 
@@ -496,6 +507,29 @@ use std::sync::Arc;
 
 let config = Arc::new(ArcSwap::from_pointee(Config::from_file("config.conf")?));
 api::start_api_server("127.0.0.1:8081", config).await?;
+```
+
+#### `metrics` (optional)
+
+Prometheus metrics exposed via a separate admin HTTP server on `/metrics`:
+
+- `http_requests_total{method,status,site}` — counter
+- `http_request_duration_seconds{method,status}` — histogram
+- `http_active_requests` — gauge (in-flight requests)
+- `tls_handshakes_total{status}` — counter (`ok` / `fail`)
+
+```bash
+# CLI flag or TINY_PROXY_METRICS_ADDR env var
+cargo run --features metrics -- --config config.conf --metrics-addr 127.0.0.1:9090
+curl http://127.0.0.1:9090/metrics
+```
+
+Or from library code:
+
+```rust
+use tiny_proxy::metrics;
+
+metrics::start_metrics_server("127.0.0.1:9090".parse()?)?;
 ```
 
 ## API Documentation
@@ -629,7 +663,7 @@ cargo run --example background
 - ⏳ WebSocket support
 - ⏳ Rate limiting
 - ✅ Structured access log with X-Request-ID (method, path, host, status, duration, bytes_sent)
-- ⏳ Metrics and monitoring
+- ✅ Prometheus metrics (request counters, latency histograms, TLS handshake counters)
 
 ## Contributing
 
