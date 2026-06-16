@@ -43,7 +43,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-tiny-proxy = "0.4"
+tiny-proxy = "0.5"
 ```
 
 ## Docker
@@ -114,6 +114,12 @@ tiny-proxy --config config.conf --addr 127.0.0.1:8080
   TLS sites → HTTPS with SNI; non-TLS → HTTP. In auto-detect mode only, each TLS port also
   gets an HTTP→HTTPS redirect listener (`redirect_port = tls_port - 443 + 80`, e.g. 443→80,
   8443→8080). With `--addr`, only the specified listener runs — **no** automatic redirect server.
+- `--metrics-addr`: Optional. Address for the Prometheus metrics admin server (requires the
+  `metrics` feature). Can also be set via the `TINY_PROXY_METRICS_ADDR` environment variable.
+  Example: `--metrics-addr 127.0.0.1:9090` then `curl http://127.0.0.1:9090/metrics`.
+- `--max-concurrency`: Max concurrent connections (default: CPU cores × 256, `0` for default).
+- `--enable-api`: Enable management API server (requires the `api` feature).
+- `--api-addr`: Address for API server (default: `127.0.0.1:8081`).
 
 ### Library Mode
 
@@ -488,23 +494,23 @@ Use placeholders in `header` and `header_up` values:
 ```toml
 # Minimal - core HTTP proxy with HTTPS backend support (for embedding)
 [dependencies]
-tiny-proxy = { version = "0.4", default-features = false }
+tiny-proxy = { version = "0.5", default-features = false }
 
 # With frontend TLS termination
 [dependencies]
-tiny-proxy = { version = "0.4", default-features = false, features = ["tls"] }
+tiny-proxy = { version = "0.5", default-features = false, features = ["tls"] }
 
 # With management API
 [dependencies]
-tiny-proxy = { version = "0.4", default-features = false, features = ["tls", "api"] }
+tiny-proxy = { version = "0.5", default-features = false, features = ["tls", "api"] }
 
 # With Prometheus metrics
 [dependencies]
-tiny-proxy = { version = "0.4", default-features = false, features = ["metrics"] }
+tiny-proxy = { version = "0.5", default-features = false, features = ["metrics"] }
 
 # Full standalone (same as default)
 [dependencies]
-tiny-proxy = "0.4"
+tiny-proxy = "0.5"
 ```
 
 #### `cli` (default)

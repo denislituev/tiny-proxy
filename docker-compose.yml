@@ -22,6 +22,11 @@ services:
     ports:
       - "8443:8443" # HTTPS (TLS termination)
       - "8080:8080" # HTTP → HTTPS redirect
+      # Prometheus metrics (built with --all-features in the Dockerfile):
+      # uncomment to scrape :9090/metrics from the host.
+      # - "9090:9090"
+    environment:
+      # TINY_PROXY_METRICS_ADDR: "0.0.0.0:9090"
     volumes:
       - ./config.conf:/etc/tiny-proxy/config.conf:ro
       - ./certs:/etc/ssl/tiny-proxy:ro

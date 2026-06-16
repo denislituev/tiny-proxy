@@ -1,0 +1,38 @@
+# Example: Prometheus metrics + multi-host upstream
+#
+# Run with:
+#   tiny-proxy --config examples/metrics.caddy --metrics-addr 127.0.0.1:9090
+#
+# Then scrape the metrics endpoint:
+#   curl http://127.0.0.1:9090/metrics
+
+# Local site, proxied to an external HTTPS API with a different Host.
+# {upstream_host} sets Host to the backend hostname (api.example.com),
+# not the public-facing one (localhost:8080).
+localhost:8080 {
+    reverse_proxy https://api.example.com:443 {
+        connect_timeout 10s
+        read_timeout 30s
+        # Override Host so the backend sees its own hostname
+        header_up Host {upstream_host}
+        # Preserve the original request URI (path + query)
+        header_up X-Original-Uri {request.uri}
+        # Forward the real client IP
+        header_up X-Real-IP {remote_ip}
+        # Strip Accept-Encoding so the backend doesn't compress the response
+        header_up -Accept-Encoding
+    }
+}
+
+# TLS site with health-check + direct response
+0.0.0.0:8443 {
+    tls /path/to/cert.pem /path/to/key.pem
+
+    handle_path /health {
+        respond 200 "ok"
+    }
+
+    reverse_proxy http://backend:3000 {
+        read_timeout 60s
+    }
+}
