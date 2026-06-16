@@ -80,6 +80,35 @@ pub fn process_header_substitution<B>(value: &str, req: &Request<B>) -> anyhow::
     Ok(result)
 }
 
+/// Process header value substitutions for upstream (`header_up`) operations.
+///
+/// Supports all the placeholders of [`process_header_substitution`] plus three
+/// extra placeholders that only make sense for outbound (upstream) headers:
+///
+/// - `{upstream_host}` — hostname:port of the `reverse_proxy` backend
+/// - `{request.uri}` — the full path + query of the incoming request
+/// - `{remote_ip}` — client IP from `remote_addr` (or `X-Forwarded-For` / `X-Real-IP`)
+///
+/// The order of substitution is: base placeholders first (`{header.*}`, `{env.*}`,
+/// `{uuid}`), then the upstream-specific ones. This lets you write e.g.
+/// `header_up Host {upstream_host}` while still being able to use `{header.X-Foo}`.
+pub fn process_upstream_substitution<B>(
+    value: &str,
+    req: &Request<B>,
+    upstream_host: &str,
+    request_uri: &str,
+    remote_ip: &str,
+) -> anyhow::Result<String> {
+    // Base substitutions ({header.*}, {env.*}, {uuid}).
+    let mut result = process_header_substitution(value, req)?;
+
+    result = result.replace("{upstream_host}", upstream_host);
+    result = result.replace("{request.uri}", request_uri);
+    result = result.replace("{remote_ip}", remote_ip);
+
+    Ok(result)
+}
+
 /// Extract remote IP address from request headers
 ///
 /// Looks for the X-Forwarded-For or X-Real-IP headers to determine the
@@ -187,5 +216,22 @@ mod tests {
 
         let ip = extract_remote_ip(&req);
         assert!(ip.is_none());
+    }
+
+    #[test]
+    fn test_process_upstream_substitution() {
+        let req = make_request_with_header("X-Trace", "abc");
+        let result = process_upstream_substitution(
+            "host={upstream_host} uri={request.uri} ip={remote_ip} trace={header.X-Trace}",
+            &req,
+            "api.example.com:443",
+            "/v1/items?limit=10",
+            "203.0.113.7",
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            "host=api.example.com:443 uri=/v1/items?limit=10 ip=203.0.113.7 trace=abc"
+        );
     }
 }

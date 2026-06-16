@@ -23,8 +23,8 @@ use crate::proxy::access_log::{ensure_request_id, final_request_id};
 use crate::proxy::ActionResult;
 
 use crate::proxy::directives::{
-    handle_header, handle_method, handle_redirect, handle_respond, handle_reverse_proxy,
-    handle_strip_prefix, handle_uri_replace,
+    apply_header_up, handle_header, handle_method, handle_redirect, handle_respond,
+    handle_reverse_proxy, handle_strip_prefix, handle_uri_replace,
 };
 
 /// Unified response body type - can handle both streaming (`Incoming`) and buffered (`Full<Bytes>`)
@@ -110,12 +110,14 @@ pub fn process_directives(
                 to,
                 connect_timeout,
                 read_timeout,
+                header_up,
             } => {
                 return Ok(handle_reverse_proxy(
                     to,
                     &modified_path,
                     *connect_timeout,
                     *read_timeout,
+                    header_up.clone(),
                 ));
             }
         }
@@ -272,6 +274,7 @@ pub async fn proxy(
                 path_to_send,
                 connect_timeout: _,
                 read_timeout,
+                header_up,
             } => {
                 // Add protocol if missing
                 let backend_with_proto =
@@ -286,7 +289,25 @@ pub async fn proxy(
                 parts.path_and_query = Some(path_to_send.parse()?);
                 let new_uri = Uri::from_parts(parts)?;
 
+                // Capture the original request URI (path + query) before we overwrite it —
+                // needed for the {request.uri} placeholder in header_up.
+                let original_request_uri = req
+                    .uri()
+                    .path_and_query()
+                    .map(|pq| pq.as_str().to_string())
+                    .unwrap_or_default();
+
                 *req.uri_mut() = new_uri.clone();
+
+                // upstream_host is the authority of the backend URL, used for {upstream_host}.
+                let upstream_host = new_uri
+                    .authority()
+                    .map(|a| a.as_str().to_string())
+                    .unwrap_or_default();
+
+                // remote_ip: prefer X-Forwarded-For / X-Real-IP, fall back to the socket peer.
+                let remote_ip = crate::auth::headers::extract_remote_ip(&req)
+                    .unwrap_or_else(|| remote_addr.ip().to_string());
 
                 // Save original host for X-Forwarded headers
                 let original_host_header = req.headers().get(hyper::header::HOST).cloned();
@@ -321,6 +342,14 @@ pub async fn proxy(
                 // Remove hop-by-hop headers
                 req.headers_mut().remove(header::CONNECTION);
                 req.headers_mut().remove("accept-encoding");
+
+                apply_header_up(
+                    &header_up,
+                    &mut req,
+                    &upstream_host,
+                    &original_request_uri,
+                    &remote_ip,
+                );
 
                 // Forward request to backend with configurable timeout (default 30s)
                 let backend_timeout = read_timeout.unwrap_or(30);

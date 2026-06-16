@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Proxy::config_snapshot()` and `Proxy::update_config()` are now synchronous.
 - Integration tests: config hot-reload on keep-alive connections, Prometheus
   `/metrics` endpoint (counters, histogram buckets, gauge, metadata).
+- **`header_up`** in `reverse_proxy` blocks — set or remove headers on upstream
+  requests (applied after default `Host` / `X-Forwarded-*`).
+- Upstream placeholders for `header_up`: `{upstream_host}`, `{request.uri}`,
+  `{remote_ip}` (via `process_upstream_substitution`).
 - Dependencies: `arc-swap`, `metrics`, `metrics-exporter-prometheus` (optional)
 
 ### Changed

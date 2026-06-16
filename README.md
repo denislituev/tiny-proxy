@@ -247,6 +247,25 @@ localhost:8080 {
 
 Timeout values support duration suffixes: `30s`, `5m`, `2h`, `1d`, or plain numbers (seconds).
 
+Upstream request headers (`header_up`) can be set inside the `reverse_proxy` block. They are applied **after** the default `Host` and `X-Forwarded-*` headers, so explicit values override defaults:
+
+```caddy
+localhost:8080 {
+    reverse_proxy https://api.example.com:443 {
+        connect_timeout 10s
+        read_timeout 30s
+        header_up Host {upstream_host}
+        header_up X-Original-Uri {request.uri}
+        header_up -Accept-Encoding
+    }
+}
+```
+
+| Syntax | Action |
+|--------|--------|
+| `header_up Name value` | set/replace header on the upstream request |
+| `header_up -Name` | remove header before forwarding |
+
 #### `tls`
 
 Enable HTTPS on the frontend with TLS termination. Specify paths to the certificate chain and private key (PEM format).
@@ -440,11 +459,17 @@ localhost:8080 {
 
 ### Placeholders
 
-Use placeholders in header values:
+Use placeholders in `header` and `header_up` values:
 
 - `{header.Name}` - Value of request header with that name
 - `{env.VAR}` - Value of environment variable
 - `{uuid}` - Random UUID
+
+`header_up` also supports:
+
+- `{upstream_host}` - hostname:port of the `reverse_proxy` backend URL
+- `{request.uri}` - path + query of the incoming client request
+- `{remote_ip}` - client IP (`X-Forwarded-For` / `X-Real-IP`, else socket address)
 
 ## Features
 
