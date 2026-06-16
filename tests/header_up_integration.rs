@@ -113,16 +113,8 @@ async fn test_header_up_reaches_backend() {
     let uri = format!("http://{proxy_host}/items?limit=3")
         .parse()
         .unwrap();
-    let response = client
-        .get(uri)
-        .await
-        .expect("proxy request should succeed");
-    let body = response
-        .into_body()
-        .collect()
-        .await
-        .unwrap()
-        .to_bytes();
+    let response = client.get(uri).await.expect("proxy request should succeed");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
 
     assert_eq!(
         std::str::from_utf8(&body).unwrap(),

@@ -98,15 +98,16 @@ pub fn apply_header_up<B>(
             Ok(header_name) => match &directive.value {
                 Some(val) => {
                     match process_upstream_substitution(
-                        val, req, upstream_host, request_uri, remote_ip,
+                        val,
+                        req,
+                        upstream_host,
+                        request_uri,
+                        remote_ip,
                     ) {
                         Ok(processed) => match HeaderValue::from_str(&processed) {
                             Ok(header_value) => {
                                 req.headers_mut().insert(header_name, header_value);
-                                info!(
-                                    "   Applied header_up: {} = {}",
-                                    directive.name, processed
-                                );
+                                info!("   Applied header_up: {} = {}", directive.name, processed);
                             }
                             Err(e) => {
                                 info!(
@@ -116,10 +117,7 @@ pub fn apply_header_up<B>(
                             }
                         },
                         Err(e) => {
-                            info!(
-                                "   Failed to apply header_up {}: {}",
-                                directive.name, e
-                            );
+                            info!("   Failed to apply header_up {}: {}", directive.name, e);
                         }
                     }
                 }
@@ -351,7 +349,11 @@ mod tests {
             "api.example.com:443"
         );
         assert_eq!(
-            req.headers().get("X-Original-Uri").unwrap().to_str().unwrap(),
+            req.headers()
+                .get("X-Original-Uri")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "/api/test?q=1"
         );
         assert!(req.headers().get("Accept-Encoding").is_none());
