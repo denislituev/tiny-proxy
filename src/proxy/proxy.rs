@@ -6,7 +6,9 @@ use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::rt::TokioIo;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(feature = "tls")]
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,7 +19,9 @@ use tracing::{error, info, warn};
 #[cfg(feature = "tls")]
 use crate::proxy::tls::{build_tls_acceptor, listen_http_redirect, listen_tls};
 
-use crate::config::{extract_hostname, resolve_listen_addr, tls_redirect_port, Config};
+#[cfg(feature = "tls")]
+use crate::config::tls_redirect_port;
+use crate::config::{extract_hostname, resolve_listen_addr, Config};
 use crate::proxy::handler::proxy;
 
 /// HTTP Proxy server that can be embedded into other applications
@@ -285,6 +289,8 @@ impl Proxy {
         }
 
         let mut http_handles = Vec::new();
+
+        #[cfg(feature = "tls")]
         let mut tls_redirects: HashSet<(SocketAddr, u16)> = HashSet::new(); // (redirect bind addr, tls_port)
 
         for (listen_addr, sites) in socket_groups {
