@@ -46,8 +46,13 @@ jobs:
       - name: Cache cargo and build
         uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
+      - name: Run tests (all features)
         run: cargo test --all-features --verbose --locked
+
+      - name: Run tests (minimal feature set)
+        # Verifies that `api` and `metrics` are truly optional: core proxy +
+        # tls + logging must compile and pass without them.
+        run: cargo test --no-default-features --features cli,tls,logging --verbose --locked
 
   build:
     name: Build (release)
