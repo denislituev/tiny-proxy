@@ -4,9 +4,6 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header;
 use hyper::{Request, Response, StatusCode, Uri};
-use hyper_rustls::HttpsConnector;
-use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::client::legacy::Client;
 use std::sync::Arc;
 use tokio::time::{timeout, Duration};
 use tracing::{error, info};
@@ -20,6 +17,10 @@ use crate::config::{extract_hostname, Config, SiteConfig};
 #[cfg(feature = "logging")]
 use crate::proxy::access_log::AccessLogGuard;
 use crate::proxy::access_log::{ensure_request_id, final_request_id};
+use crate::proxy::forward_auth::{
+    apply_identity_headers, resolve_auth, scrub_identity_headers, AuthCtx, AuthResult,
+};
+use crate::proxy::types::ProxyClient;
 use crate::proxy::ActionResult;
 
 use crate::proxy::directives::{
@@ -50,15 +51,21 @@ fn is_hop_header(name: &header::HeaderName) -> bool {
 }
 
 /// Process directives in order, applying modifications and returning final action.
-/// Supports recursive handling of handle_path blocks.
+/// Supports recursive handling of handle_path and method blocks.
+///
+/// Middleware directives (`forward_auth`) are evaluated where they appear:
+/// at site level, or inside the `handle_path` / `method` block that matched.
+/// Multiple `forward_auth` directives run sequentially — all must allow the
+/// request before a terminal directive is reached.
 ///
 /// Note: `info!` logs here are correlated with request ID only when the `logging`
 /// feature is enabled (via the tracing span set in `proxy()`). Without `logging`,
 /// these logs appear without request context.
-pub fn process_directives(
+pub async fn process_directives(
     directives: &[crate::config::Directive],
     req: &mut Request<Incoming>,
     current_path: &str,
+    ctx: &AuthCtx<'_>,
 ) -> Result<ActionResult, String> {
     let mut modified_path = current_path.to_string();
 
@@ -84,7 +91,13 @@ pub fn process_directives(
             } => {
                 if let Some(remaining_path) = match_pattern(pattern, &modified_path) {
                     info!("   Matched handle_path: {}", pattern);
-                    return process_directives(nested_directives, req, &remaining_path);
+                    return Box::pin(process_directives(
+                        nested_directives,
+                        req,
+                        &remaining_path,
+                        ctx,
+                    ))
+                    .await;
                 }
             }
 
@@ -94,7 +107,13 @@ pub fn process_directives(
             } => {
                 if handle_method(methods, req) {
                     info!("   Matched method directive");
-                    return process_directives(nested_directives, req, &modified_path);
+                    return Box::pin(process_directives(
+                        nested_directives,
+                        req,
+                        &modified_path,
+                        ctx,
+                    ))
+                    .await;
                 }
             }
 
@@ -120,6 +139,41 @@ pub fn process_directives(
                     header_up.clone(),
                 ));
             }
+
+            crate::config::Directive::ForwardAuth(auth_cfg) => {
+                // Spoofing protection first: configured identity headers must
+                // never survive from client input, even under failure_mode open.
+                scrub_identity_headers(req, auth_cfg);
+
+                match resolve_auth(ctx, req, auth_cfg).await {
+                    AuthResult::Allowed { identity } => {
+                        apply_identity_headers(req, &identity);
+                    }
+                    AuthResult::Denied {
+                        status,
+                        www_authenticate,
+                    } => {
+                        return Ok(ActionResult::AuthDenied {
+                            status: status.as_u16(),
+                            www_authenticate,
+                        });
+                    }
+                    AuthResult::Failed { .. } => match auth_cfg.failure_mode {
+                        crate::config::FailureMode::Closed => {
+                            // Fail closed: the backend is never contacted when
+                            // the auth service cannot produce a decision.
+                            return Ok(ActionResult::AuthDenied {
+                                status: StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+                                www_authenticate: None,
+                            });
+                        }
+                        crate::config::FailureMode::Open => {
+                            // Infrastructure failure only — continue without
+                            // identity headers (already scrubbed above).
+                        }
+                    },
+                }
+            }
         }
     }
 
@@ -141,7 +195,7 @@ pub fn process_directives(
 /// since these are small and generated by the proxy itself
 pub async fn proxy(
     mut req: Request<Incoming>,
-    client: Client<HttpsConnector<HttpConnector>, Incoming>,
+    client: ProxyClient,
     config: Arc<Config>,
     remote_addr: std::net::SocketAddr,
     is_tls: bool,
@@ -154,6 +208,13 @@ pub async fn proxy(
 
     let future = async move {
         let path = req.uri().path().to_string();
+        // Original request target (path + query) as received from the client,
+        // captured before any directive rewriting — used for X-Original-URI.
+        let original_uri = req
+            .uri()
+            .path_and_query()
+            .map(|pq| pq.as_str().to_string())
+            .unwrap_or_default();
         let host = req
             .headers()
             .get(hyper::header::HOST)
@@ -194,29 +255,37 @@ pub async fn proxy(
             }
         };
 
-        // Process directives in correct order
-        let action_result = match process_directives(&site_config.directives, &mut req, &path) {
-            Ok(result) => result,
-            Err(e) => {
-                error!("Directive processing error: {}", e);
-                let final_id = final_request_id(&req, &initial_request_id);
-                #[cfg(feature = "logging")]
-                {
-                    log_guard.set_request_id(final_id.clone());
-                    tracing::Span::current().record("req_id", final_id.as_str());
-                }
-                let (response, _body_len) =
-                    error_response_with_id(StatusCode::INTERNAL_SERVER_ERROR, &e, &final_id);
-                #[cfg(feature = "logging")]
-                {
-                    log_guard.set_bytes_sent(_body_len);
-                    log_guard.finish(500);
-                }
-                #[cfg(feature = "metrics")]
-                metrics_guard.record(500);
-                return Ok(response);
-            }
+        let auth_ctx = AuthCtx {
+            client: &client,
+            original_uri: &original_uri,
+            remote_addr,
+            is_tls,
         };
+
+        // Process directives in correct order
+        let action_result =
+            match process_directives(&site_config.directives, &mut req, &path, &auth_ctx).await {
+                Ok(result) => result,
+                Err(e) => {
+                    error!("Directive processing error: {}", e);
+                    let final_id = final_request_id(&req, &initial_request_id);
+                    #[cfg(feature = "logging")]
+                    {
+                        log_guard.set_request_id(final_id.clone());
+                        tracing::Span::current().record("req_id", final_id.as_str());
+                    }
+                    let (response, _body_len) =
+                        error_response_with_id(StatusCode::INTERNAL_SERVER_ERROR, &e, &final_id);
+                    #[cfg(feature = "logging")]
+                    {
+                        log_guard.set_bytes_sent(_body_len);
+                        log_guard.finish(500);
+                    }
+                    #[cfg(feature = "metrics")]
+                    metrics_guard.record(500);
+                    return Ok(response);
+                }
+            };
 
         // Read final request ID (directive may have overwritten X-Request-ID)
         let request_id = final_request_id(&req, &initial_request_id);
@@ -269,6 +338,38 @@ pub async fn proxy(
                 metrics_guard.record(status_code.as_u16());
                 Ok(response)
             }
+            ActionResult::AuthDenied {
+                status,
+                www_authenticate,
+            } => {
+                let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN);
+
+                let body = if status_code == StatusCode::SERVICE_UNAVAILABLE {
+                    "Authorization service unavailable"
+                } else {
+                    ""
+                };
+                let _body_len = body.len();
+
+                let boxed: ResponseBody = Full::new(Bytes::from(body.to_string()))
+                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+                    .boxed();
+                let mut builder = Response::builder()
+                    .status(status_code)
+                    .header("X-Request-ID", &request_id);
+                if let Some(challenge) = www_authenticate {
+                    builder = builder.header("WWW-Authenticate", challenge);
+                }
+                let response = builder.body(boxed)?;
+                #[cfg(feature = "logging")]
+                {
+                    log_guard.set_bytes_sent(_body_len);
+                    log_guard.finish(status_code.as_u16());
+                }
+                #[cfg(feature = "metrics")]
+                metrics_guard.record(status_code.as_u16());
+                Ok(response)
+            }
             ActionResult::ReverseProxy {
                 backend_url,
                 path_to_send,
@@ -286,7 +387,17 @@ pub async fn proxy(
 
                 // Use Uri::from_parts() instead of format!() + parse() - faster!
                 let mut parts = backend_with_proto.parse::<Uri>()?.into_parts();
-                parts.path_and_query = Some(path_to_send.parse()?);
+
+                // Preserve the client's query string: directive processing
+                // tracks only the path component (matching / stripping), so
+                // re-attach the query from the (not yet overwritten) request URI.
+                let path_with_query = match req.uri().query() {
+                    Some(q) if !path_to_send.contains('?') => {
+                        format!("{path_to_send}?{q}")
+                    }
+                    _ => path_to_send.clone(),
+                };
+                parts.path_and_query = Some(path_with_query.parse()?);
                 let new_uri = Uri::from_parts(parts)?;
 
                 // Capture the original request URI (path + query) before we overwrite it —
@@ -351,9 +462,17 @@ pub async fn proxy(
                     &remote_ip,
                 );
 
-                // Forward request to backend with configurable timeout (default 30s)
+                // Forward request to backend with configurable timeout (default 30s).
+                // The client's streaming body is boxed into the unified client
+                // body type (no buffering).
                 let backend_timeout = read_timeout.unwrap_or(30);
-                match timeout(Duration::from_secs(backend_timeout), client.request(req)).await {
+                let send_req = req.map(crate::proxy::forward_auth::box_incoming);
+                match timeout(
+                    Duration::from_secs(backend_timeout),
+                    client.request(send_req),
+                )
+                .await
+                {
                     Ok(Ok(response)) => {
                         let status = response.status();
                         let headers = response.headers().clone();

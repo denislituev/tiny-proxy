@@ -1,0 +1,45 @@
+# Example: forward_auth — delegate authorization to an external auth service
+#
+# Run with:
+#   tiny-proxy --config examples/forward_auth.caddy
+#
+# Request flow for /api/*:
+#   client -> tiny-proxy -> GET http://auth:8080/verify (subrequest)
+#                             Authorization + Cookie + X-Original-URI ...
+#          <- 2xx: continue to http://api:8080 with X-User/X-Email/X-Roles
+#          <- 401/403: denied, backend never contacted
+
+localhost:8080 {
+    # Protected API: auth applies only inside this route.
+    handle_path /api/* {
+        forward_auth {
+            # Auth service endpoint (validated at config load).
+            to http://auth:8080/verify
+
+            # Client headers copied to the subrequest (default if omitted).
+            request_headers Authorization Cookie
+
+            # Auth response headers propagated to the backend as trusted
+            # identity headers. Client-supplied values for these headers
+            # are stripped first (spoofing protection).
+            response_headers X-User X-Email X-Roles
+
+            # closed (default): auth outage -> 503, backend never contacted.
+            # open: auth infra failure -> continue WITHOUT identity headers
+            #       (explicit 401/403 are still enforced).
+            failure_mode closed
+
+            # Subrequest deadline (default: 5s).
+            timeout 5s
+        }
+
+        reverse_proxy http://api:8080
+    }
+
+    # Public paths: no authorization.
+    handle_path /health {
+        respond 200 "ok"
+    }
+
+    reverse_proxy http://static:8080
+}

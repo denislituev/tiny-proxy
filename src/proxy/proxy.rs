@@ -1,7 +1,6 @@
 use arc_swap::ArcSwap;
-use hyper::body::Incoming;
 use hyper::service::service_fn;
-use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
+use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
@@ -23,6 +22,7 @@ use crate::proxy::tls::{build_tls_acceptor, listen_http_redirect, listen_tls};
 use crate::config::tls_redirect_port;
 use crate::config::{extract_hostname, resolve_listen_addr, Config};
 use crate::proxy::handler::proxy;
+use crate::proxy::types::{ProxyClient, ProxyRequestBody};
 
 /// HTTP Proxy server that can be embedded into other applications
 ///
@@ -75,7 +75,7 @@ use crate::proxy::handler::proxy;
 /// ```
 pub struct Proxy {
     config: Arc<ArcSwap<Config>>,
-    client: Client<HttpsConnector<HttpConnector>, Incoming>,
+    client: ProxyClient,
     max_concurrency: usize,
     semaphore: Arc<Semaphore>,
 }
@@ -104,10 +104,10 @@ impl Proxy {
             .enable_http1()
             .wrap_connector(http);
 
-        let client = Client::builder(TokioExecutor::new())
+        let client: ProxyClient = Client::builder(TokioExecutor::new())
             .pool_max_idle_per_host(100)
             .pool_idle_timeout(Duration::from_secs(90))
-            .build::<_, Incoming>(https);
+            .build::<_, ProxyRequestBody>(https);
 
         let max_concurrency = std::env::var("TINY_PROXY_MAX_CONCURRENCY")
             .ok()
@@ -149,10 +149,10 @@ impl Proxy {
             .enable_http1()
             .wrap_connector(http);
 
-        let client = Client::builder(TokioExecutor::new())
+        let client: ProxyClient = Client::builder(TokioExecutor::new())
             .pool_max_idle_per_host(100)
             .pool_idle_timeout(Duration::from_secs(90))
-            .build::<_, Incoming>(https);
+            .build::<_, ProxyRequestBody>(https);
 
         let max_concurrency = std::env::var("TINY_PROXY_MAX_CONCURRENCY")
             .ok()
@@ -443,7 +443,7 @@ impl Proxy {
     /// Core HTTP accept loop — shared between `start_http` and `start_all`.
     async fn run_http_loop(
         addr: SocketAddr,
-        client: Client<HttpsConnector<HttpConnector>, Incoming>,
+        client: ProxyClient,
         config: Arc<ArcSwap<Config>>,
         semaphore: Arc<Semaphore>,
         max_concurrency: usize,

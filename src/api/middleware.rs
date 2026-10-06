@@ -6,10 +6,12 @@ use http_body_util::Full;
 use hyper::{Request, Response, StatusCode};
 
 /// API authentication middleware
+///
+/// The error variant is boxed to keep `Result` small (clippy::result_large_err).
 pub async fn auth_middleware<B>(
     req: Request<B>,
     api_key: &str,
-) -> Result<Request<B>, Response<Full<Bytes>>>
+) -> Result<Request<B>, Box<Response<Full<Bytes>>>>
 where
     B: Body,
 {
@@ -25,13 +27,14 @@ where
     }
 }
 
-fn unauthorized_response(message: &str) -> Response<Full<Bytes>> {
+fn unauthorized_response(message: &str) -> Box<Response<Full<Bytes>>> {
     let body = format!(r#"{{"error": "Unauthorized", "message": "{}"}}"#, message);
 
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
         .header("Content-Type", "application/json")
         .body(Full::new(Bytes::from(body)))
+        .map(Box::new)
         .expect("static response build")
 }
 
