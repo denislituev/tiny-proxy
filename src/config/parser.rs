@@ -1,6 +1,6 @@
 use crate::config::address::{extract_hostname, resolve_listen_addr};
-use crate::config::models::HeaderDirective;
-use crate::config::{Config, Directive, SiteConfig};
+use crate::config::models::{normalize_auth_endpoint, HeaderDirective};
+use crate::config::{Config, Directive, FailureMode, ForwardAuthConfig, SiteConfig};
 use crate::error::ProxyError;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -15,6 +15,18 @@ struct PendingBlock {
     read_timeout: Option<u64>,
     // header_up operations collected inside a reverse_proxy block
     header_up: Vec<HeaderDirective>,
+    forward_auth: Option<ForwardAuthBlock>,
+}
+
+/// Raw state accumulated while parsing a `forward_auth { ... }` block.
+/// Validated and converted into [`ForwardAuthConfig`] when the block closes.
+#[derive(Debug, Default)]
+struct ForwardAuthBlock {
+    to: Option<String>,
+    request_headers: Option<Vec<String>>,
+    response_headers: Option<Vec<String>>,
+    failure_mode: Option<FailureMode>,
+    timeout: Option<u64>,
 }
 
 /// Parse a human-readable duration string into seconds.
@@ -59,6 +71,67 @@ fn parse_duration(s: &str) -> Result<u64, ProxyError> {
     Ok(value * multiplier)
 }
 
+/// Validate a raw `forward_auth` block into a fully typed configuration.
+///
+/// All validation happens here — at config-load time — so the runtime never
+/// sees an invalid endpoint, header name, or failure mode.
+fn build_forward_auth(pending: ForwardAuthBlock, line: usize) -> Result<Directive, ProxyError> {
+    use crate::config::models::{default_auth_timeout_secs, default_request_headers};
+
+    let raw_to = pending.to.ok_or_else(|| {
+        ProxyError::Parse(format!(
+            "forward_auth block closed on line {} is missing 'to <url>'",
+            line
+        ))
+    })?;
+
+    let uri: hyper::Uri = raw_to.parse().map_err(|e| {
+        ProxyError::Parse(format!(
+            "forward_auth 'to' is not a valid URI on line {}: {}",
+            line, e
+        ))
+    })?;
+    let endpoint = normalize_auth_endpoint(uri).map_err(|e| {
+        ProxyError::Parse(format!(
+            "Invalid forward_auth 'to' URL '{}' on line {}: {}",
+            raw_to, line, e
+        ))
+    })?;
+
+    let parse_headers =
+        |names: &[String], what: &str| -> Result<Vec<hyper::header::HeaderName>, ProxyError> {
+            names
+                .iter()
+                .map(|n| {
+                    hyper::header::HeaderName::from_bytes(n.as_bytes()).map_err(|_| {
+                        ProxyError::Parse(format!(
+                            "Invalid header name '{}' in forward_auth {} on line {}",
+                            n, what, line
+                        ))
+                    })
+                })
+                .collect()
+        };
+
+    let request_headers = match pending.request_headers {
+        Some(names) => parse_headers(&names, "request_headers")?,
+        None => default_request_headers(),
+    };
+
+    let response_headers = match pending.response_headers {
+        Some(names) => parse_headers(&names, "response_headers")?,
+        None => Vec::new(),
+    };
+
+    Ok(Directive::ForwardAuth(ForwardAuthConfig {
+        endpoint,
+        request_headers,
+        response_headers,
+        failure_mode: pending.failure_mode.unwrap_or(FailureMode::Closed),
+        timeout_secs: pending.timeout.unwrap_or_else(default_auth_timeout_secs),
+    }))
+}
+
 impl Config {
     pub fn from_file(path: &str) -> Result<Self, ProxyError> {
         let content = std::fs::read_to_string(path)?;
@@ -98,6 +171,7 @@ impl FromStr for Config {
 
                 // Nested block (handle_path, method, reverse_proxy, etc.)
                 let directive_type = parts[0].to_string();
+                let is_forward_auth = directive_type == "forward_auth";
                 // Filter out trailing "{" from args
                 let args = parts[1..]
                     .iter()
@@ -111,6 +185,11 @@ impl FromStr for Config {
                     connect_timeout: None,
                     read_timeout: None,
                     header_up: vec![],
+                    forward_auth: if is_forward_auth {
+                        Some(ForwardAuthBlock::default())
+                    } else {
+                        None
+                    },
                 });
                 directive_stack.push(vec![]);
                 continue;
@@ -122,7 +201,7 @@ impl FromStr for Config {
                     let finished_directives = directive_stack
                         .pop()
                         .expect("directive_stack has at least 2 elements");
-                    let block_info = block_stack.pop().expect("block_stack has matching entry");
+                    let mut block_info = block_stack.pop().expect("block_stack has matching entry");
 
                     let completed_directive = match block_info.directive_type.as_str() {
                         "handle_path" => {
@@ -144,6 +223,20 @@ impl FromStr for Config {
                                 read_timeout: block_info.read_timeout,
                                 header_up: block_info.header_up,
                             }
+                        }
+                        "forward_auth" => {
+                            if !finished_directives.is_empty() {
+                                return Err(ProxyError::Parse(format!(
+                                    "Nested directives are not allowed inside a forward_auth block (line {}). Allowed: to, request_headers, response_headers, failure_mode, timeout.",
+                                    line_num + 1
+                                )));
+                            }
+                            let pending = block_info.forward_auth.take().ok_or_else(|| {
+                                ProxyError::Parse(
+                                    "internal error: forward_auth block state missing".to_string(),
+                                )
+                            })?;
+                            build_forward_auth(pending, line_num + 1)?
                         }
                         _ => {
                             return Err(ProxyError::Parse(format!(
@@ -192,6 +285,91 @@ impl FromStr for Config {
 
             let directive_name = parts[0];
             let args = parts[1..].to_vec();
+
+            // Special handling: settings inside a forward_auth block
+            if let Some(block) = block_stack.last_mut() {
+                if block.directive_type == "forward_auth" {
+                    let pending = match block.forward_auth.as_mut() {
+                        Some(p) => p,
+                        None => {
+                            return Err(ProxyError::Parse(
+                                "internal error: forward_auth block state missing".to_string(),
+                            ))
+                        }
+                    };
+                    match directive_name {
+                        "to" => {
+                            let raw = args.first().map(|s| s.to_string()).ok_or_else(|| {
+                                ProxyError::Parse(format!(
+                                    "Missing URL for forward_auth 'to' on line {}",
+                                    line_num + 1
+                                ))
+                            })?;
+                            pending.to = Some(raw);
+                            continue;
+                        }
+                        "request_headers" | "response_headers" => {
+                            if args.is_empty() {
+                                return Err(ProxyError::Parse(format!(
+                                    "Missing header names for '{}' on line {}",
+                                    directive_name,
+                                    line_num + 1
+                                )));
+                            }
+                            let headers: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+                            if directive_name == "request_headers" {
+                                pending.request_headers = Some(headers);
+                            } else {
+                                pending.response_headers = Some(headers);
+                            }
+                            continue;
+                        }
+                        "failure_mode" => {
+                            let raw = args.first().copied().ok_or_else(|| {
+                                ProxyError::Parse(format!(
+                                    "Missing value for failure_mode on line {}",
+                                    line_num + 1
+                                ))
+                            })?;
+                            let mode = match raw {
+                                "closed" => FailureMode::Closed,
+                                "open" => FailureMode::Open,
+                                other => {
+                                    return Err(ProxyError::Parse(format!(
+                                        "Invalid failure_mode '{}' on line {}. Expected 'open' or 'closed'",
+                                        other,
+                                        line_num + 1
+                                    )))
+                                }
+                            };
+                            pending.failure_mode = Some(mode);
+                            continue;
+                        }
+                        "timeout" => {
+                            let raw = args.first().copied().ok_or_else(|| {
+                                ProxyError::Parse(format!(
+                                    "Missing value for forward_auth timeout on line {}",
+                                    line_num + 1
+                                ))
+                            })?;
+                            pending.timeout = Some(parse_duration(raw).map_err(|e| {
+                                ProxyError::Parse(format!(
+                                    "Invalid forward_auth timeout on line {}: {}",
+                                    line_num + 1,
+                                    e
+                                ))
+                            })?);
+                            continue;
+                        }
+                        _ => {
+                            return Err(ProxyError::Parse(format!(
+                                "Unexpected directive '{}' inside forward_auth block on line {}. Allowed: to, request_headers, response_headers, failure_mode, timeout.",
+                                directive_name, line_num + 1
+                            )));
+                        }
+                    }
+                }
+            }
 
             // Special handling: timeout and header_up settings inside a reverse_proxy block
             if let Some(block) = block_stack.last_mut() {
@@ -586,6 +764,186 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("Unexpected directive"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_forward_auth_minimal_defaults() {
+        let config = r#"localhost:8080 {
+    forward_auth {
+        to http://auth:8080/verify
+    }
+    reverse_proxy http://backend:9001
+}"#;
+        let config: Config = config.parse().unwrap();
+        let site = config.sites.get("localhost:8080").unwrap();
+        match &site.directives[0] {
+            Directive::ForwardAuth(auth) => {
+                assert_eq!(auth.endpoint, "http://auth:8080/verify");
+                // Secure defaults
+                assert_eq!(auth.failure_mode, FailureMode::Closed);
+                assert_eq!(auth.timeout_secs, 5);
+                assert_eq!(auth.request_headers.len(), 2);
+                assert!(auth
+                    .request_headers
+                    .iter()
+                    .any(|h| h.as_str() == "authorization"));
+                assert!(auth.request_headers.iter().any(|h| h.as_str() == "cookie"));
+                assert!(auth.response_headers.is_empty());
+            }
+            _ => panic!("Expected ForwardAuth directive"),
+        }
+    }
+
+    #[test]
+    fn test_parse_forward_auth_full() {
+        let config = r#"localhost:8080 {
+    forward_auth {
+        to https://auth.example.com:8443/authorize
+        request_headers Authorization Cookie X-API-Key
+        response_headers X-User X-Email X-Roles
+        failure_mode open
+        timeout 10s
+    }
+    reverse_proxy http://backend:9001
+}"#;
+        let config: Config = config.parse().unwrap();
+        let site = config.sites.get("localhost:8080").unwrap();
+        match &site.directives[0] {
+            Directive::ForwardAuth(auth) => {
+                assert_eq!(auth.endpoint, "https://auth.example.com:8443/authorize");
+                assert_eq!(auth.failure_mode, FailureMode::Open);
+                assert_eq!(auth.timeout_secs, 10);
+                let req: Vec<&str> = auth.request_headers.iter().map(|h| h.as_str()).collect();
+                assert_eq!(req, vec!["authorization", "cookie", "x-api-key"]);
+                let resp: Vec<&str> = auth.response_headers.iter().map(|h| h.as_str()).collect();
+                assert_eq!(resp, vec!["x-user", "x-email", "x-roles"]);
+            }
+            _ => panic!("Expected ForwardAuth directive"),
+        }
+    }
+
+    #[test]
+    fn test_parse_forward_auth_failure_mode_closed_explicit() {
+        let config = "localhost:8080 {\n    forward_auth {\n        to http://auth:8080/verify\n        failure_mode closed\n    }\n}";
+        let config: Config = config.parse().unwrap();
+        let site = config.sites.get("localhost:8080").unwrap();
+        match &site.directives[0] {
+            Directive::ForwardAuth(auth) => assert_eq!(auth.failure_mode, FailureMode::Closed),
+            _ => panic!("Expected ForwardAuth directive"),
+        }
+    }
+
+    #[test]
+    fn test_parse_forward_auth_invalid_failure_mode_rejected() {
+        let config = "localhost:8080 {\n    forward_auth {\n        to http://auth:8080/verify\n        failure_mode banana\n    }\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("failure_mode"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_forward_auth_missing_to_rejected() {
+        let config = "localhost:8080 {\n    forward_auth {\n        failure_mode open\n    }\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("to"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_forward_auth_invalid_uri_rejected() {
+        // No scheme — not a usable upstream endpoint.
+        let config = "localhost:8080 {\n    forward_auth {\n        to auth:8080/verify\n    }\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+
+        let config =
+            "localhost:8080 {\n    forward_auth {\n        to ftp://auth:8080/verify\n    }\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_forward_auth_invalid_header_name_rejected() {
+        let config = "localhost:8080 {\n    forward_auth {\n        to http://auth:8080/verify\n        request_headers Authorization Bad\\ Header\n    }\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("header name"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_forward_auth_unknown_key_rejected() {
+        let config = "localhost:8080 {\n    forward_auth {\n        to http://auth:8080/verify\n        banana 1\n    }\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("forward_auth block"), "{}", err_msg);
+    }
+
+    #[test]
+    fn test_parse_forward_auth_nested_directive_rejected() {
+        let config = "localhost:8080 {\n    forward_auth {\n        to http://auth:8080/verify\n        handle_path /x {\n            respond 200\n        }\n    }\n}";
+        let result: Result<Config, _> = config.parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_forward_auth_inside_handle_path() {
+        let config = r#"localhost:8080 {
+    handle_path /api/* {
+        forward_auth {
+            to http://auth:8080/verify
+            response_headers X-User
+        }
+        reverse_proxy http://backend:9001
+    }
+    respond 404
+}"#;
+        let config: Config = config.parse().unwrap();
+        let site = config.sites.get("localhost:8080").unwrap();
+        match &site.directives[0] {
+            Directive::HandlePath { directives, .. } => {
+                assert!(matches!(directives[0], Directive::ForwardAuth(_)));
+                assert!(matches!(directives[1], Directive::ReverseProxy { .. }));
+            }
+            _ => panic!("Expected HandlePath directive"),
+        }
+    }
+
+    #[test]
+    fn test_forward_auth_endpoint_path_normalized() {
+        let config = "localhost:8080 {\n    forward_auth {\n        to http://auth:8080\n    }\n}";
+        let config: Config = config.parse().unwrap();
+        let site = config.sites.get("localhost:8080").unwrap();
+        match &site.directives[0] {
+            Directive::ForwardAuth(auth) => {
+                assert_eq!(auth.endpoint.path(), "/");
+                assert_eq!(auth.endpoint.authority().unwrap(), "auth:8080");
+            }
+            _ => panic!("Expected ForwardAuth directive"),
+        }
+    }
+
+    #[test]
+    fn test_forward_auth_example_config_parses() {
+        // The shipped example must stay in sync with the parser.
+        let content = include_str!("../../examples/forward_auth.caddy");
+        let config: Config = content.parse().unwrap();
+        assert_eq!(config.sites.len(), 1);
+
+        let site = config.sites.get("localhost:8080").unwrap();
+        match &site.directives[0] {
+            Directive::HandlePath {
+                pattern,
+                directives,
+            } => {
+                assert_eq!(pattern, "/api/*");
+                assert!(matches!(directives[0], Directive::ForwardAuth(_)));
+            }
+            _ => panic!("Expected HandlePath directive"),
+        }
     }
 
     #[test]

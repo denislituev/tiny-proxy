@@ -82,3 +82,20 @@ pub fn tls_handshake(status: &str) {
 /// No-op when `metrics` feature is disabled.
 #[cfg(not(feature = "metrics"))]
 pub fn tls_handshake(_status: &str) {}
+
+/// Record a forward-auth subrequest outcome.
+///
+/// `result` is `allowed` (2xx), `denied` (4xx decision), or `error`
+/// (infrastructure failure — the request then continues or fails per
+/// `failure_mode`).
+#[cfg(feature = "metrics")]
+pub fn record_auth(result: &str, duration: std::time::Duration) {
+    use metrics::{counter, histogram};
+
+    counter!("auth_requests_total", "result" => result.to_owned()).increment(1);
+    histogram!("auth_request_duration_seconds").record(duration.as_secs_f64());
+}
+
+/// No-op when `metrics` feature is disabled.
+#[cfg(not(feature = "metrics"))]
+pub fn record_auth(_result: &str, _duration: std::time::Duration) {}

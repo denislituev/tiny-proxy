@@ -21,6 +21,7 @@ Lightweight, embeddable HTTP reverse proxy written in Rust with Caddy-like confi
 - **Method-based Routing**: Different behavior for different HTTP methods
 - **Direct Responses**: Respond with custom status codes and bodies
 - **Authentication Module**: Token validation and header substitution
+- **Forward Auth**: Delegate authorization to an external service (`forward_auth`)
 - **Management API**: REST API for runtime configuration management (optional feature)
 - **Prometheus Metrics**: Request counters, latency histograms, and TLS handshake metrics (optional feature)
 
@@ -405,6 +406,74 @@ localhost:8080 {
 }
 ```
 
+#### `forward_auth`
+
+Delegate authorization to an external auth service before the request reaches
+its backend. tiny-proxy sends a `GET` subrequest (without the client's body)
+to the configured endpoint; the original request continues only on a `2xx`
+decision.
+
+```caddy
+example.com {
+    forward_auth {
+        to http://auth:8080/verify
+
+        # Client headers copied to the auth subrequest (default).
+        request_headers Authorization Cookie
+
+        # Auth response headers propagated to the backend as
+        # trusted identity headers.
+        response_headers X-User X-Email X-Roles
+
+        # closed (default) | open
+        failure_mode closed
+    }
+
+    reverse_proxy http://api:8080
+}
+```
+
+The auth subrequest carries:
+
+- the whitelisted `request_headers` copied from the client request
+  (everything else is **not** forwarded);
+- `X-Original-URI` / `X-Original-Method` describing the client request
+  (the URI includes the query string and is captured before any path
+  rewriting by `handle_path` / `strip_prefix` / `uri_replace`);
+- `X-Forwarded-For` / `X-Forwarded-Host` / `X-Forwarded-Proto`
+  (`X-Forwarded-For` carries the immediate peer's IP — the socket address —
+  matching what tiny-proxy sends to backends; client-supplied
+  `X-Forwarded-For` chains are not forwarded);
+- the request's `X-Request-ID` for tracing correlation.
+
+`Host` is a system header on the subrequest: it is always set to the auth
+endpoint's authority and cannot be overridden via `request_headers`. The
+whitelisted headers are copied from the request as it exists at the point
+where `forward_auth` is evaluated — i.e., after any earlier `header`
+directives have run.
+
+Outcome handling:
+
+| Auth response | Behavior |
+|---------------|----------|
+| `2xx` (body fully received) | Allow. Configured `response_headers` are copied onto the backend request; the auth body is drained without buffering and never forwarded. |
+| `401` / `403` | Deny. Status (and `WWW-Authenticate`) is returned to the client; the backend is not contacted. |
+| other `4xx` | Deny, preserving the auth service's status. |
+| `5xx` / connect error / timeout / broken `2xx` body stream | Infrastructure failure: `failure_mode closed` (default) returns `503` and never contacts the backend; `failure_mode open` continues without identity headers. |
+
+`failure_mode open` **never** bypasses an explicit `401`/`403` denial — it
+only applies to auth-service infrastructure failures. The subrequest is
+bounded by `timeout` (default: `5s`).
+
+**Security:** client-supplied values for the configured `response_headers`
+are always removed before the auth subrequest runs, so a client cannot spoof
+trusted identity headers — not even when the auth service omits them or
+`failure_mode open` lets a request through.
+
+The directive can appear anywhere in the pipeline (including inside
+`handle_path` and `method` blocks) and is evaluated in directive order;
+multiple `forward_auth` directives authorize sequentially.
+
 ### Configuration Examples
 
 #### Simple Reverse Proxy
@@ -462,6 +531,30 @@ localhost:8080 {
     reverse_proxy http://backend:3000
 }
 ```
+
+#### Forward Auth with Identity Propagation
+
+```caddy
+example.com {
+    handle_path /api/* {
+        forward_auth {
+            to http://auth:8080/verify
+            request_headers Authorization Cookie
+            response_headers X-User X-Email X-Roles
+            failure_mode closed
+        }
+        reverse_proxy http://api:8080
+    }
+    reverse_proxy http://static:8080
+}
+```
+
+Requests to `/api/*` are authorized first: the client's `Authorization` and
+`Cookie` headers plus `X-Original-URI`/`X-Original-Method` go to
+`http://auth:8080/verify`; on `2xx` the auth service's `X-User` / `X-Email` /
+`X-Roles` response headers are attached to the backend request (client-supplied
+values for those headers are stripped first). Non-API paths are not
+authorized. See [`forward_auth`](#forward_auth) for details.
 
 ### Placeholders
 
@@ -548,6 +641,8 @@ Prometheus metrics exposed via a separate admin HTTP server on `/metrics`:
 - `http_request_duration_seconds{method,status}` — histogram
 - `http_active_requests` — gauge (in-flight requests)
 - `tls_handshakes_total{status}` — counter (`ok` / `fail`)
+- `auth_requests_total{result}` — counter (`allowed` / `denied` / `error`)
+- `auth_request_duration_seconds` — histogram (forward-auth subrequests)
 
 ```bash
 # CLI flag or TINY_PROXY_METRICS_ADDR env var
@@ -608,17 +703,32 @@ RUST_LOG=debug cargo test
 
 ## Benchmarking
 
-Run benchmarks:
+### Comparative: tiny-proxy vs nginx vs Caddy
+
+Docker-based end-to-end benchmarks against nginx and Caddy with equivalent
+configs (plain HTTP, JSON API, TLS termination), plus a version-vs-version
+A/B mode for checking releases for performance regressions:
 
 ```bash
-cargo bench
+cd benchmarks
+./run.sh              # 3-way comparison (add --skip-tls to skip scenario 3)
+./run_ab.sh v0.5.0    # A/B: git ref vs current tree, same-day, same-env
 ```
 
-Run specific benchmark:
+Latest results (Apple M1 Max, Docker Desktop): tiny-proxy is within ~15% of
+nginx on plain HTTP throughput, **leads TLS termination** with a p99 tail of
+66ms vs nginx 128ms / Caddy 150ms, and ships the smallest image (23 MB vs
+92/85 MB). Full methodology, configs, raw results and version history:
+**[BENCHMARKS.md](BENCHMARKS.md)**.
+
+### Micro-benchmarks (criterion)
 
 ```bash
-cargo bench -- benchmark_name
+cargo bench                      # all
+cargo bench -- pattern_matching  # specific group
 ```
+
+Results land in `target/criterion/report/index.html`.
 
 ## Development
 

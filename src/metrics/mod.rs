@@ -10,6 +10,8 @@
 //! | `http_request_duration_seconds` | histogram | `method`, `status` |
 //! | `http_active_requests` | gauge | (none) |
 //! | `tls_handshakes_total` | counter | `status` (`ok` / `fail`) |
+//! | `auth_requests_total` | counter | `result` (`allowed` / `denied` / `error`) |
+//! | `auth_request_duration_seconds` | histogram | (none) |
 //!
 //! # Usage
 //!
@@ -21,5 +23,5 @@
 mod recorder;
 mod server;
 
-pub use recorder::{record_request, tls_handshake, MetricsGuard};
+pub use recorder::{record_auth, record_request, tls_handshake, MetricsGuard};
 pub use server::start_metrics_server;

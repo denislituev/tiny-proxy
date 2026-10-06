@@ -7,7 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+## [0.6.0] - 2026-10-05
+
+### Added
+
+- **Forward Auth middleware** (`forward_auth` directive): performs a `GET`
+  authorization subrequest to an external auth service before the request
+  reaches its backend. The original request body is never consumed by the
+  subrequest and remains streamed to the backend.
+  - `to` — auth endpoint (validated at config load: absolute `http`/`https`
+    URI with a host, in both the text parser and the JSON API);
+  - `request_headers` — whitelist of client headers copied to the subrequest
+    (default: `Authorization`, `Cookie`); everything else is not forwarded;
+  - `response_headers` — auth response headers propagated to the backend as
+    trusted identity headers. Client-supplied values for these headers are
+    removed **before** the subrequest runs, so identity headers cannot be
+    spoofed — including when the auth service omits them;
+  - `failure_mode` — `closed` (default, `503` on auth infrastructure
+    failure) or `open` (continue without identity headers). Explicit
+    `401`/`403` denials are never bypassed by `open`;
+  - `timeout` — subrequest deadline (default: `5s`);
+  - `401` responses preserve the auth service's `WWW-Authenticate` header;
+  - the auth response body is drained frame by frame without buffering; a `2xx`
+    whose body stream breaks mid-flight is treated as an infrastructure
+    failure (subject to `failure_mode`), not as an authorization decision;
+  - works inside `handle_path` / `method` blocks and is evaluated in
+    directive order (multiple `forward_auth` authorize sequentially);
+  - the subrequest carries `X-Original-URI` (path + query, captured before
+    any rewriting), `X-Original-Method`, `X-Forwarded-For`/`-Host`/`-Proto`,
+    and the request's `X-Request-ID`. `Host` on the subrequest is a system
+    header (always the endpoint's authority, not overridable via
+    `request_headers`).
+- Integration tests: authorized/unauthorized/forbidden flows, fail-closed
+  and fail-open infrastructure failures, `401` + `open` non-bypass,
+  broken auth body stream (closed and open), identity-header spoofing,
+  POST body preservation, query strings, nested `handle_path`, header
+  casing, request-ID propagation, and streaming (SSE-style) responses.
+- Forward-auth metrics: `auth_requests_total{result}` (`allowed` / `denied` /
+  `error`) and `auth_request_duration_seconds` histogram when the `metrics`
+  feature is enabled.
+
+### Changed
+
+- `process_directives()` is now `async` and takes an additional
+  `&AuthCtx` argument (forward-auth execution context).
+- The proxy's request body type is unified to
+  `BoxBody<Bytes, Box<dyn Error + Send + Sync>>`; the pooled Hyper client is
+  shared between backend requests and forward-auth subrequests (one client,
+  one connection pool).
+- `Proxy::start_with_addr` / `start_tls` now use the unified client type.
+
+### Fixed
+
+- `reverse_proxy` no longer drops the query string when proxying
+  (path + query are forwarded to the backend).
 
 ## [0.5.0] - 2026-06-16
 

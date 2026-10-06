@@ -1,5 +1,6 @@
 mod access_log;
 mod directives;
+pub mod forward_auth;
 pub mod handler;
 #[allow(clippy::module_inception)]
 mod proxy;
@@ -9,4 +10,4 @@ mod types;
 mod tls;
 
 pub use proxy::Proxy;
-pub use types::ActionResult;
+pub use types::{ActionResult, ProxyClient, ProxyRequestBody};
