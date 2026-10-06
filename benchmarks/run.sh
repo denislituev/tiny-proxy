@@ -14,9 +14,9 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 # --- Config ---
-REQUESTS=10000
-CONNECTIONS=100
-RUNS=3
+REQUESTS=${REQUESTS:-10000}
+CONNECTIONS=${CONNECTIONS:-100}
+RUNS=${RUNS:-3}
 RESULTS_DIR="results"
 
 log()  { echo -e "\033[0;32m[BENCH]\033[0m $*" >&2; }
@@ -79,6 +79,12 @@ fi
 mkdir -p "$RESULTS_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SUMMARY_FILE="$RESULTS_DIR/summary_${TIMESTAMP}.md"
+
+# --- Record the exact environment for reproducibility ---
+TINY_VERSION=$(docker compose -f compose.yml exec -T tiny-proxy tiny-proxy --version 2>/dev/null | awk '{print $NF}')
+NGINX_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' nginx:alpine 2>/dev/null)
+CADDY_DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' caddy:alpine 2>/dev/null)
+DOCKER_VERSION=$(docker version --format '{{.Server.Version}}' 2>/dev/null)
 
 # --- Parse hey output ---
 parse_hey() {
@@ -202,7 +208,9 @@ print_table() {
     echo ""
     echo "**Date:** $(date)"
     echo "**Tool:** hey — $REQUESTS requests, $CONNECTIONS connections, best of $RUNS runs"
-    echo "**Environment:** Docker Desktop on $(uname -sm)"
+    echo "**Environment:** Docker Desktop ${DOCKER_VERSION:-?} on $(uname -sm)"
+    echo "**tiny-proxy:** ${TINY_VERSION:-unknown}"
+    echo "**Images:** nginx ${NGINX_DIGEST:-?} · caddy ${CADDY_DIGEST:-?}"
     echo ""
 
     print_table "1. Plain Text (~11 bytes response)" 0 3

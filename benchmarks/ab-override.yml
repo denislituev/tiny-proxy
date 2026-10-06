@@ -1,0 +1,19 @@
+# A/B override: run TWO tiny-proxy versions side by side on separate ports.
+# Used by run_ab.sh for same-day version comparisons. Set:
+#   TINY_PROXY_IMAGE_OLD / TINY_PROXY_IMAGE_NEW
+services:
+  tiny-proxy:
+    image: ${TINY_PROXY_IMAGE_OLD:?set TINY_PROXY_IMAGE_OLD}
+    build: !reset []
+
+  tiny-proxy-new:
+    image: ${TINY_PROXY_IMAGE_NEW:?set TINY_PROXY_IMAGE_NEW}
+    ports:
+      - "8090:8090"
+      - "8446:8446"
+    volumes:
+      - ./proxies/tiny-proxy-ab.conf:/etc/tiny-proxy/config.conf:ro
+      - ./certs:/etc/ssl/tiny-proxy:ro
+    depends_on:
+      - backend
+      - backend-json
